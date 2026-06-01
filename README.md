@@ -1,8 +1,8 @@
 # DLNAScreenCastDemo
 
-Android 手机投屏技术 Demo。项目计划在约 3 天内按 7 个小 PR 逐步完成一个可演示、可测试、可下载 APK 的原型。
+Android 手机投屏技术 Demo。项目按 7 个小 PR 逐步完成一个可演示、可测试、可下载 APK 的原型。
 
-当前仓库仅完成 **PR 1：Jetpack Compose 项目初始化**。DLNA 发现、屏幕采集、视频编码、本地流服务和播放控制尚未实现。
+当前仓库完成到 **PR 2：DLNA / UPnP SSDP Renderer 设备发现**。本阶段只负责在同一局域网内搜索 Renderer、安全解析设备描述文档并在首页展示结果。
 
 ## 技术目标
 
@@ -12,33 +12,44 @@ Android 手机投屏技术 Demo。项目计划在约 3 天内按 7 个小 PR 逐
 | 视频分辨率 | `1080P` | 未实测 |
 | 视频码率 | `8 Mbps` | 未实测 |
 | 音频码率 | `AAC 128 Kbps` | 未实测 |
-| 平台 | Android Demo | PR 1 已建立基础工程 |
+| 平台 | Android Demo | PR 2 已实现设备发现代码 |
 
-没有真实测试数据前，本项目不会把目标值写成已达成结果。
+目标值不代表已达成结果。PR 2 已在 Android 真机和 Kodi 环境完成局域网 Renderer 发现实测；采集、编码、推流、播放控制和性能指标仍未实测。
 
 ## 技术架构
 
 ```mermaid
 flowchart LR
-    UI["Compose UI"] --> DISCOVERY["DLNA / UPnP 发现与控制"]
-    UI --> CAPTURE["MediaProjection 屏幕采集"]
-    CAPTURE --> ENCODER["MediaCodec H.264 编码"]
-    ENCODER --> STREAM["本地 HTTP 流服务"]
-    STREAM --> RENDERER["Kodi / DLNA Renderer"]
+    UI["Compose 首页"] --> VIEWMODEL["DeviceListViewModel"]
+    VIEWMODEL --> REPOSITORY["DeviceRepository"]
+    REPOSITORY --> SSDP["SSDP M-SEARCH"]
+    REPOSITORY --> DESCRIPTION["HTTP(S) 描述下载 + 安全 XML 解析"]
+    DESCRIPTION --> RENDERER["MediaRenderer 列表"]
+    UI -. 后续 PR .-> CAPTURE["MediaProjection / 编码 / 本地流 / 播控"]
 ```
 
-PR 1 只包含图中的 Compose UI 骨架。其他节点会按后续 PR 顺序实现。
+## PR 2 已实现
 
-## 当前页面
+- SSDP `M-SEARCH`，范围固定为 `MediaRenderer:1` 和 `ssdp:all`。
+- 按规范化后的 `LOCATION` 去重。
+- 解析 `UDN`、`friendlyName`、`manufacturer`、`modelName` 和 AVTransport `controlURL`。
+- 设备 ID 优先使用 `UDN`，缺失时回退到描述文档 URL。
+- 缺少 AVTransport 的 Renderer 仍展示，并明确标记不可用于后续播控。
+- HTTP(S) 描述下载限制超时、响应体大小和最多 1 次重定向。
+- XML 禁用 DTD 和外部实体，避免 XXE。
+- Android 不支持部分 JAXP 附加防护配置时记录 debug 日志并继续解析，避免阻断正常 Renderer。
+- 首页展示搜索状态、设备列表和无电视排查提示。
 
-Compose 首页目前展示：
+## 本阶段不实现
 
-- 当前阶段：`PR 1 / 7`
-- 后续功能列表
-- 性能指标“未实测”提示
-- 禁用状态的“搜索设备”和“开始投屏”按钮
+PR 2 不实现以下能力：
 
-禁用按钮是后续 PR 的入口占位，不代表功能已经实现。
+- `MediaProjection` 屏幕采集
+- H.264 编码
+- 本地流服务
+- DLNA 播放控制
+
+首页中的“开始投屏”按钮保持禁用。`1080P`、`8 Mbps`、`AAC 128 Kbps`、延迟 `< 2 秒` 均为目标指标，当前未实测。
 
 ## 运行环境
 
@@ -46,10 +57,31 @@ Compose 首页目前展示：
 - Gradle Wrapper：`9.4.1`
 - Android Gradle Plugin：`9.2.1`
 - Kotlin：AGP 内建 Kotlin `2.2.10`
-- Compose Compiler Gradle Plugin：`2.2.10`
 - `compileSdk`：Android `36.1`
 - `minSdk`：Android `26`
-- 应用包名：`com.example.dlnascreencastdemo`
+- 应用包名：`com.qierong.dlnascreencastdemo`
+
+## 权限说明
+
+Manifest 声明：
+
+```text
+INTERNET
+ACCESS_NETWORK_STATE
+CHANGE_WIFI_MULTICAST_STATE
+NEARBY_WIFI_DEVICES
+```
+
+- Android 13+ 搜索前请求 `NEARBY_WIFI_DEVICES`，并使用 `neverForLocation`。
+- `ACCESS_NETWORK_STATE` 用于判断当前是否连接 Wi-Fi，并提供明确错误提示。
+- SSDP 和设备描述文档依赖局域网访问。许多 Renderer 使用 HTTP 描述地址，因此 App 允许明文 HTTP。
+- Android 16 的本地网络限制为选择启用阶段，不应描述为“Android 16 必须请求附近设备权限”。
+- Android 17、`targetSdk 37+` 需要迁移到 `ACCESS_LOCAL_NETWORK`；该迁移点留给后续兼容性 PR。
+
+参考：
+
+- [附近 Wi-Fi 设备权限](https://developer.android.com/develop/connectivity/wifi/wifi-permissions)
+- [本地网络权限](https://developer.android.com/privacy-and-security/local-network-permission?hl=zh-cn)
 
 ## 如何构建
 
@@ -58,13 +90,6 @@ Windows PowerShell：
 ```powershell
 .\gradlew.bat assembleDebug
 .\gradlew.bat testDebugUnitTest
-```
-
-macOS / Linux / Git Bash：
-
-```bash
-./gradlew assembleDebug
-./gradlew testDebugUnitTest
 ```
 
 Debug APK 输出路径：
@@ -77,31 +102,15 @@ app/build/outputs/apk/debug/app-debug.apk
 
 连接 Android 手机并启用 USB 调试后执行：
 
-```bash
+```powershell
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb shell am start -n com.example.dlnascreencastdemo/.MainActivity
+adb shell am start -n com.qierong.dlnascreencastdemo/.MainActivity
+adb logcat -s DLNA-Demo
 ```
 
-## 无电视测试
+## 无电视测试：Kodi Renderer 发现
 
-PR 1 可以验证 App 构建、安装和首页启动。完整无电视投屏验证会在本地流服务完成后补齐：
-
-1. 准备一台 Android 手机和一台电脑，并连接同一个 Wi-Fi。
-2. 在电脑端安装 Kodi，后续用作 UPnP / DLNA Renderer。
-3. 本地流服务完成后，用 `curl` 抓取流并用 `ffprobe` 检查格式。
-4. 用 `ffplay` 播放手机提供的流地址并记录实际延迟。
-
-计划使用的播放命令：
-
-```bash
-ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -analyzeduration 0 http://<phone-ip>:8080/live.ts
-```
-
-当前 PR 尚未提供流地址，因此上述命令现在不能用于验收。
-
-## Kodi 测试准备
-
-后续 DLNA 发现 PR 中，电脑端 Kodi 需要开启：
+准备一台 Android 手机和一台电脑，并连接同一个 Wi-Fi。电脑端安装 Kodi，在以下路径开启 UPnP / DLNA：
 
 ```text
 Settings -> Services -> UPnP / DLNA
@@ -110,24 +119,56 @@ Allow remote control via UPnP
 Look for remote UPnP players
 ```
 
+安装并打开 App 后点击“搜索 DLNA 设备”。通过标准：
+
+- 首页能显示 Kodi 或其他 Renderer。
+- 列表显示设备名称、厂商、型号、IP、描述地址和 AVTransport 状态。
+- `adb logcat -s DLNA-Demo` 能看到搜索开始、M-SEARCH、响应 URL 和设备数量。
+
+### PR 2 真机验收记录
+
+- 测试时间：2026-06-01
+- 手机型号：`23127PN0CC`
+- Android 版本：`16`，API `36`
+- 网络环境：Windows 电脑热点，手机连接热点；电脑运行 Kodi
+- 页面结果：显示 `Kodi (SK-20220818ZFPP)`，IP 为 `192.168.137.1`，并解析出 AVTransport 控制地址
+- logcat 结果：`设备搜索结束：发现 1 个 Renderer`
+- 结论：PR 2 的局域网 Renderer 发现链路真机验收通过
+
+![PR 2 Kodi Renderer 真机验收截图](docs/screenshots/pr2-kodi-renderer.jpg)
+
+如果没有搜索到设备，请检查：
+
+1. 手机和电脑或电视是否连接同一 Wi-Fi。
+2. Kodi 是否开启 UPnP / DLNA。
+3. Windows 防火墙是否拦截局域网访问。
+4. 路由器是否开启 AP 隔离。
+5. 当前 PR 仅实现设备发现，不实现投屏播放。
+
+## 后续无电视投屏测试
+
+本地流服务完成后，计划使用以下命令验证流地址：
+
+```bash
+curl -v http://<phone-ip>:8080/live.ts --output sample.ts --max-time 10
+ffprobe sample.ts
+ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -analyzeduration 0 http://<phone-ip>:8080/live.ts
+```
+
+当前 PR 尚未提供流地址，上述命令不能用于本阶段验收。
+
 ## 技术指标测试方法
 
-延迟必须通过可复现方式测量：
+延迟必须通过可复现方式测量：手机画面显示时间戳，电脑使用 `ffplay` 播放手机流，再使用另一台设备同时拍摄手机和电脑屏幕，根据时间差或视频帧差计算延迟。至少记录 3 次结果和平均值。
 
-1. 手机画面显示时间戳。
-2. 电脑使用 `ffplay` 播放手机流。
-3. 使用另一台设备同时拍摄手机和电脑屏幕。
-4. 根据时间差或视频帧差计算延迟。
-5. 至少记录 3 次结果和平均值。
-
-PR 1 没有投屏链路，所有技术指标均为“未实测”。
+PR 2 没有投屏链路，采集、编码、推流、播放控制和所有性能指标均为“未实测”。
 
 ## PR 开发顺序
 
 | PR | 内容 | 状态 |
 |---|---|---|
-| PR 1 | Kotlin + Jetpack Compose 初始化、README、基础页面、最小测试 | 当前 PR |
-| PR 2 | DLNA / UPnP Renderer 发现 | 未开始 |
+| PR 1 | Kotlin + Jetpack Compose 初始化、README、基础页面、最小测试 | 已合并 |
+| PR 2 | DLNA / UPnP Renderer 发现 | 当前 PR |
 | PR 3 | MediaProjection 权限与采集状态 | 未开始 |
 | PR 4 | H.264 编码参数与展示 | 未开始 |
 | PR 5 | 本地 HTTP 流服务与 PC 播放测试 | 未开始 |
@@ -136,22 +177,21 @@ PR 1 没有投屏链路，所有技术指标均为“未实测”。
 
 ## 已知问题
 
-- PR 1 只有 Compose 页面骨架，尚不能搜索设备或投屏。
-- 尚未在真机安装和启动 APK。
-- 尚未生成截图或录屏。
+- 部分路由器、防火墙或 Renderer 实现可能影响 SSDP 发现。
+- 尚未完成投屏链路截图或录屏。
 - 尚未发布 GitHub Release APK。
 - 系统音频采集受 Android 权限和应用捕获策略限制，后续实现时必须按真实结果记录。
 
 ## 开源参考声明
 
-PR 1 仅参考 Android 官方 Jetpack Compose 配置方式，没有复制第三方项目代码。
+PR 2 参考 UPnP Device Architecture 和 Android 官方权限文档中的协议与平台约束，没有复制第三方项目代码。乐播云仅作为兼容性参考，没有接入其 SDK。
 
 ## 截图与录屏
 
-未完成。将在真机冒烟测试和最终演示阶段补充。
+PR 2 已保存 Kodi Renderer 真机发现截图。投屏链路截图和录屏将在后续阶段补充。
 
 ## Release 下载
 
 仓库地址：[QieRong/DLNAScreenCastDemo](https://github.com/QieRong/DLNAScreenCastDemo)
 
-Release APK 尚未发布。阶段版本计划从 `v0.1.0-bootstrap` 开始。
+Release APK 尚未发布。
