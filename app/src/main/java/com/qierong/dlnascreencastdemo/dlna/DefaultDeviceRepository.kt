@@ -15,8 +15,8 @@ class DefaultDeviceRepository(
     private val locationDiscovery: RendererLocationDiscovery,
     private val descriptionFetcher: DeviceDescriptionFetcher,
     private val networkStatusProvider: NetworkStatusProvider,
-    private val descriptionParser: DeviceDescriptionParser = DeviceDescriptionParser(),
     private val logger: DiscoveryLogger = NoOpDiscoveryLogger,
+    private val descriptionParser: DeviceDescriptionParser = DeviceDescriptionParser(logger),
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : DeviceRepository {
     override suspend fun discoverRenderers(): List<DlnaDevice> = withContext(ioDispatcher) {
@@ -49,7 +49,12 @@ class DefaultDeviceRepository(
         } catch (exception: CancellationException) {
             throw exception
         } catch (exception: Exception) {
-            logger.warn("跳过无法解析的设备描述：$descriptionUrl", exception)
+            logger.warn(
+                "跳过无法解析的设备描述：" +
+                    "url=$descriptionUrl " +
+                    "type=${exception.discoveryLogType()} " +
+                    "reason=${exception.discoveryLogReason()}",
+            )
             null
         }
     }

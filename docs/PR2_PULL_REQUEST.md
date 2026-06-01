@@ -5,6 +5,7 @@
 - 将应用包名统一修正为 `com.qierong.dlnascreencastdemo`。
 - 使用原生 UDP 实现 SSDP `M-SEARCH`，仅搜索 `MediaRenderer:1` 和 `ssdp:all`。
 - 安全拉取并解析 Renderer 描述 XML，展示设备名称、厂商、型号、IP、描述地址和 AVTransport 状态。
+- 兼容 Android 不支持部分 JAXP XML 附加防护配置的情况，同时保留 `DOCTYPE` 和外部实体拒绝策略。
 - 增加 Wi-Fi 状态判断、Android 13+ `NEARBY_WIFI_DEVICES` 权限请求和中文空状态排查说明。
 
 ## 使用的 Skills
@@ -30,15 +31,29 @@
 ```powershell
 .\gradlew.bat assembleDebug
 .\gradlew.bat testDebugUnitTest
+.\gradlew.bat lintDebug
 ```
 
-结果：`PASS`。`assembleDebug` 已生成 Debug APK，`testDebugUnitTest` 已通过。
+结果：`PASS`。`assembleDebug` 已生成 Debug APK，`testDebugUnitTest` 已通过 24 个测试，`lintDebug` 已通过。
+
+已尝试运行：
+
+```powershell
+.\gradlew.bat connectedDebugAndroidTest
+```
+
+结果：`FAIL`。小米系统拦截测试 APK 安装，返回 `INSTALL_FAILED_USER_RESTRICTED: Install canceled by user`，实际执行 `0 tests`。本 PR 不将其记录为已通过。
 
 ## 手动测试
 
-- 设备：当前没有已连接 Android 真机或模拟器。
-- 接收端软件：当前没有 Kodi 实测证据。
-- 结果：**局域网 Renderer 发现未实测**。
+- 设备：`23127PN0CC`
+- Android 版本：`16`，API `36`
+- 网络环境：Windows 电脑热点，手机连接热点。
+- 接收端软件：Kodi，运行于热点电脑。
+- 页面结果：显示 `Kodi (SK-20220818ZFPP)`，IP 为 `192.168.137.1`，并解析出 AVTransport 控制地址。
+- logcat 结果：`设备搜索结束：发现 1 个 Renderer`
+- 截图：`docs/screenshots/pr2-kodi-renderer.jpg`
+- 结论：**局域网 Renderer 发现真机验收通过**。
 
 ## 本 PR 不实现
 
@@ -58,6 +73,6 @@
 
 ## 已知问题
 
-- 局域网 Renderer 发现未实测。
 - 防火墙、路由器 AP 隔离和不同 Renderer 实现可能影响发现结果。
+- 小米系统拦截 instrumentation 测试 APK 安装，`connectedDebugAndroidTest` 尚未通过。
 - Android 17、`targetSdk 37+` 的 `ACCESS_LOCAL_NETWORK` 迁移留给后续兼容性 PR。

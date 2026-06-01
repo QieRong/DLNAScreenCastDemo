@@ -24,3 +24,15 @@ object NoOpDiscoveryLogger : DiscoveryLogger {
 
     override fun warn(message: String, throwable: Throwable?) = Unit
 }
+
+internal fun Throwable.discoveryLogType(): String =
+    this::class.java.simpleName.ifBlank { this::class.java.name }
+
+internal fun Throwable.discoveryLogReason(): String =
+    message
+        .orEmpty()
+        .replace(Regex("\\s+"), " ")
+        .ifBlank { "无详细原因" }
+        .take(MAX_LOG_REASON_LENGTH)
+
+private const val MAX_LOG_REASON_LENGTH = 160

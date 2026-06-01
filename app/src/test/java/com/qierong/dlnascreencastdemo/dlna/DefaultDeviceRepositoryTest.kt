@@ -5,6 +5,9 @@ import com.qierong.dlnascreencastdemo.dlna.discovery.RendererLocationDiscovery
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import java.io.IOException
@@ -39,12 +42,14 @@ class DefaultDeviceRepositoryTest {
                 brokenUrl to IOException("timeout"),
             ),
         )
+        val logger = RecordingDiscoveryLogger()
         val repository = DefaultDeviceRepository(
             locationDiscovery = FakeRendererLocationDiscovery(
                 listOf(validUrl, validUrl, brokenUrl),
             ),
             descriptionFetcher = fetcher,
             networkStatusProvider = NetworkStatusProvider { true },
+            logger = logger,
             ioDispatcher = StandardTestDispatcher(testScheduler),
         )
 
@@ -53,6 +58,11 @@ class DefaultDeviceRepositoryTest {
         assertEquals(listOf("uuid:kodi"), devices.map(DlnaDevice::id))
         assertEquals(1, fetcher.callCountByUrl.getValue(validUrl))
         assertEquals(1, fetcher.callCountByUrl.getValue(brokenUrl))
+        assertTrue(logger.warningMessage.contains("url=$brokenUrl"))
+        assertTrue(logger.warningMessage.contains("type=IOException"))
+        assertTrue(logger.warningMessage.contains("reason=timeout"))
+        assertFalse(logger.warningMessage.contains(rendererXml("uuid:kodi", "客厅 Kodi").decodeToString()))
+        assertNull(logger.warningThrowable)
     }
 
     private fun rendererXml(udn: String, friendlyName: String): ByteArray = """
@@ -88,6 +98,18 @@ class DefaultDeviceRepositoryTest {
                 is Exception -> throw result
                 else -> error("Unsupported fake result")
             }
+        }
+    }
+
+    private class RecordingDiscoveryLogger : DiscoveryLogger {
+        var warningMessage: String = ""
+        var warningThrowable: Throwable? = null
+
+        override fun debug(message: String) = Unit
+
+        override fun warn(message: String, throwable: Throwable?) {
+            warningMessage = message
+            warningThrowable = throwable
         }
     }
 }
