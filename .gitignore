@@ -1,0 +1,14 @@
+*.iml
+.gradle
+/.agents
+/.idea
+/.kotlin
+/local.properties
+/docs/superpowers
+/skills-lock.json
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
