@@ -1,4 +1,4 @@
-package com.example.dlnascreencastdemo.ui.theme
+package com.qierong.dlnascreencastdemo.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

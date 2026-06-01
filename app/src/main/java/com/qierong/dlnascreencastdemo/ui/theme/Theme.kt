@@ -1,4 +1,4 @@
-package com.example.dlnascreencastdemo.ui.theme
+package com.qierong.dlnascreencastdemo.ui.theme
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
