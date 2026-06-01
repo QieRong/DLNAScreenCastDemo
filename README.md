@@ -135,7 +135,9 @@ Look for remote UPnP players
 - logcat 结果：`设备搜索结束：发现 1 个 Renderer`
 - 结论：PR 2 的局域网 Renderer 发现链路真机验收通过
 
-![PR 2 Kodi Renderer 真机验收截图](docs/screenshots/pr2-kodi-renderer.jpg)
+<a href="docs/screenshots/pr2-kodi-renderer-redacted.jpg">
+  <img src="docs/screenshots/pr2-kodi-renderer-redacted.jpg" alt="PR 2 Kodi Renderer 真机验收截图" width="360">
+</a>
 
 如果没有搜索到设备，请检查：
 

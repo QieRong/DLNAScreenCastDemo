@@ -52,7 +52,7 @@
 - 接收端软件：Kodi，运行于热点电脑。
 - 页面结果：显示 `Kodi (SK-20220818ZFPP)`，IP 为 `192.168.137.1`，并解析出 AVTransport 控制地址。
 - logcat 结果：`设备搜索结束：发现 1 个 Renderer`
-- 截图：`docs/screenshots/pr2-kodi-renderer.jpg`
+- 截图：`docs/screenshots/pr2-kodi-renderer-redacted.jpg`
 - 结论：**局域网 Renderer 发现真机验收通过**。
 
 ## 本 PR 不实现
