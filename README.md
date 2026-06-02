@@ -212,9 +212,7 @@ ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -analyzedurati
 - 截图：`docs/screenshots/pr3-screen-capture-source-options.png`、`docs/screenshots/pr3-screen-capture-app-choice.png` 和 `docs/screenshots/pr3-screen-capture-active.png`，仅包含 App 页面、系统授权弹窗和系统录屏状态提示，已检查无聊天、账号或通知隐私
 - 结论：PR 3 屏幕采集骨架在当前真机完成授权、采集、旋转、App 停止、锁屏停止和资源释放验收
 
-<img src="docs/screenshots/pr3-screen-capture-active.png" alt="PR 3 MediaProjection 屏幕采集真机验收截图" width="240">
-
-<img src="docs/screenshots/pr3-screen-capture-source-options.png" alt="PR 3 系统授权支持整屏和单应用选择" width="240">
+<img src="docs/screenshots/pr3-screen-capture-active.png" alt="PR 3 MediaProjection 屏幕采集真机验收截图" width="240"> <img src="docs/screenshots/pr3-screen-capture-source-options.png" alt="PR 3 系统授权支持整屏和单应用选择" width="240">
 
 ## 技术指标测试方法
 
