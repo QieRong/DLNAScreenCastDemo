@@ -3,7 +3,6 @@ package com.qierong.dlnascreencastdemo.capture
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 
 class CaptureStateStore {
     private val _state = MutableStateFlow<CaptureState>(CaptureState.Idle)
@@ -20,8 +19,15 @@ class CaptureStateStore {
         _state.value = CaptureState.Starting
     }
 
-    fun markCapturing(config: CaptureConfig) {
-        _state.value = CaptureState.Capturing(config)
+    fun markCapturing(sessionInfo: CaptureSessionInfo) {
+        _state.value = CaptureState.Capturing(sessionInfo)
+    }
+
+    fun markReconfiguring(
+        sessionInfo: CaptureSessionInfo,
+        targetSourceConfig: CaptureConfig,
+    ) {
+        _state.value = CaptureState.Reconfiguring(sessionInfo, targetSourceConfig)
     }
 
     fun markStopping() {
@@ -38,16 +44,6 @@ class CaptureStateStore {
 
     fun markIdle() {
         _state.value = CaptureState.Idle
-    }
-
-    fun updateConfig(config: CaptureConfig) {
-        _state.update { state ->
-            if (state is CaptureState.Capturing) {
-                state.copy(config = config)
-            } else {
-                state
-            }
-        }
     }
 
     companion object {

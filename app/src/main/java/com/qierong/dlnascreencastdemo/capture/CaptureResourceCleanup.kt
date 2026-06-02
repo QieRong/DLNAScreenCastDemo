@@ -3,9 +3,8 @@ package com.qierong.dlnascreencastdemo.capture
 import java.util.concurrent.atomic.AtomicBoolean
 
 internal class CaptureResourceCleanup(
-    private val stopFrameConsumer: () -> Unit,
     private val releaseVirtualDisplay: () -> Unit,
-    private val closeFrameSurface: () -> Unit,
+    private val releaseVideoEncoder: () -> Unit,
     private val unregisterProjectionCallback: () -> Unit,
     private val stopProjection: () -> Unit,
     private val stopWorkerThread: () -> Unit,
@@ -14,9 +13,8 @@ internal class CaptureResourceCleanup(
 
     fun release(stopProjection: Boolean) {
         if (!released.compareAndSet(false, true)) return
-        safely(stopFrameConsumer)
         safely(releaseVirtualDisplay)
-        safely(closeFrameSurface)
+        safely(releaseVideoEncoder)
         safely(unregisterProjectionCallback)
         if (stopProjection) safely(this.stopProjection)
         safely(stopWorkerThread)
