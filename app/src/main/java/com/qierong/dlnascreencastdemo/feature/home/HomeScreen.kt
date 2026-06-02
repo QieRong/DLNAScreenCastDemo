@@ -17,19 +17,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import com.qierong.dlnascreencastdemo.capture.CaptureConfig
-import com.qierong.dlnascreencastdemo.capture.CaptureSessionInfo
 import com.qierong.dlnascreencastdemo.capture.CaptureState
 import com.qierong.dlnascreencastdemo.capture.hasActiveSession
 import com.qierong.dlnascreencastdemo.dlna.DlnaDevice
-import com.qierong.dlnascreencastdemo.encoder.ActiveEncoderConfig
-import com.qierong.dlnascreencastdemo.encoder.BitrateMode
-import com.qierong.dlnascreencastdemo.encoder.EncoderConfig
 import com.qierong.dlnascreencastdemo.feature.device.DeviceDiscoveryStatus
 import com.qierong.dlnascreencastdemo.feature.device.DeviceListUiState
-import com.qierong.dlnascreencastdemo.ui.theme.DLNAScreenCastDemoTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -59,7 +52,6 @@ fun HomeScreen(
         )
     }
 }
-
 @Composable
 private fun HomeContent(
     state: HomeUiState,
@@ -123,6 +115,9 @@ private fun HomeContent(
             EncoderStatusCard(state = captureState)
         }
         item {
+            StreamStatusCard(state = captureState)
+        }
+        item {
             DiscoveryStatusCard(status = deviceState.status)
         }
         if (deviceState.status == DeviceDiscoveryStatus.Empty) {
@@ -184,47 +179,12 @@ private fun CaptureStatusCard(
 }
 
 @Composable
-private fun EncoderStatusCard(
-    state: CaptureState,
-    modifier: Modifier = Modifier,
-) {
-    val sessionInfo = when (state) {
-        is CaptureState.Capturing -> state.sessionInfo
-        is CaptureState.Reconfiguring -> state.sessionInfo
-        else -> null
-    }
-    val detail = sessionInfo?.encoderConfig?.toUiText()
-        ?: """
-            优先选择 1080P 编码画布，实际配置取决于设备 H.264 encoder capabilities。
-            当前尚未启动 H.264 编码。性能仍未实测。
-        """.trimIndent()
-    StatusCard(title = "视频编码参数", detail = detail, modifier = modifier)
-}
-
-private fun ActiveEncoderConfig.toUiText(): String {
-    val bitrateModeText = when (config.bitrateMode) {
-        BitrateMode.CBR -> "CBR"
-        BitrateMode.DEFAULT -> "默认 / 非 CBR"
-    }
-    return """
-        编码器：$codecName
-        实际编码画布：${config.width} x ${config.height}
-        已配置视频码率：${config.videoBitrate / 1_000_000.0} Mbps
-        码率模式：$bitrateModeText
-        帧率：${config.frameRate} fps
-        关键帧间隔：${config.iFrameIntervalSeconds} 秒
-        降级：${if (isDegraded) "是" else "否"}
-        说明：优先选择 1080P 编码画布，实际配置取决于设备 H.264 encoder capabilities；性能仍未实测。
-    """.trimIndent()
-}
-
-@Composable
 private fun DiscoveryStatusCard(
     status: DeviceDiscoveryStatus,
     modifier: Modifier = Modifier,
 ) {
     val detail = when (status) {
-        DeviceDiscoveryStatus.Idle -> "尚未搜索。当前 PR 仅实现设备发现，不实现投屏播放。"
+        DeviceDiscoveryStatus.Idle -> "尚未搜索。当前 PR 已提供本地视频流，DLNA 播放控制尚未实现。"
         DeviceDiscoveryStatus.Searching -> "正在通过 SSDP 搜索局域网 Renderer，请稍候。"
         DeviceDiscoveryStatus.Empty -> "未发现 Renderer，请查看下方排查说明。"
         is DeviceDiscoveryStatus.Success -> "已发现 ${status.count} 个 Renderer。"
@@ -244,7 +204,7 @@ private fun EmptyStateCard(modifier: Modifier = Modifier) {
             2. Kodi 需要开启 UPnP / DLNA。
             3. Windows 防火墙可能拦截局域网发现。
             4. 路由器 AP 隔离可能导致搜索不到。
-            5. 当前 PR 仅实现设备发现，不实现投屏播放。
+            5. 当前 PR 已提供本地视频流，DLNA 播放控制尚未实现。
         """.trimIndent(),
         modifier = modifier,
     )
@@ -271,7 +231,7 @@ private fun DeviceCard(
 }
 
 @Composable
-private fun StatusCard(
+internal fun StatusCard(
     title: String,
     detail: String,
     modifier: Modifier = Modifier,
@@ -290,63 +250,5 @@ private fun StatusCard(
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
-    }
-}
-
-@Preview(showBackground = true)
-@Composable
-private fun HomeScreenPreview() {
-    DLNAScreenCastDemoTheme {
-        HomeScreen(
-            state = HomeUiState(),
-            deviceState = DeviceListUiState(status = DeviceDiscoveryStatus.Empty),
-            captureState = CaptureState.Idle,
-            onSearchDevices = {},
-            onStartCapture = {},
-            onStopCapture = {},
-        )
-    }
-}
-
-@Preview(showBackground = true)
-@Composable
-private fun HomeScreenDarkPreview() {
-    DLNAScreenCastDemoTheme(darkTheme = true) {
-        HomeScreen(
-            state = HomeUiState(),
-            deviceState = DeviceListUiState(
-                status = DeviceDiscoveryStatus.Success(count = 1),
-                devices = listOf(
-                    DlnaDevice(
-                        id = "uuid:kodi",
-                        udn = "uuid:kodi",
-                        friendlyName = "客厅 Kodi",
-                        manufacturer = "Kodi Foundation",
-                        modelName = "Kodi",
-                        ipAddress = "192.168.1.20",
-                        descriptionUrl = "http://192.168.1.20/device.xml",
-                        avTransportControlUrl = null,
-                    ),
-                ),
-            ),
-            captureState = CaptureState.Capturing(
-                CaptureSessionInfo(
-                    sourceConfig = CaptureConfig(width = 1080, height = 2400, densityDpi = 440),
-                    encoderConfig = ActiveEncoderConfig(
-                        codecName = "preview.avc.encoder",
-                        config = EncoderConfig(
-                            width = 1080,
-                            height = 1920,
-                            videoBitrate = 8_000_000,
-                            bitrateMode = BitrateMode.CBR,
-                        ),
-                        isDegraded = false,
-                    ),
-                ),
-            ),
-            onSearchDevices = {},
-            onStartCapture = {},
-            onStopCapture = {},
-        )
     }
 }

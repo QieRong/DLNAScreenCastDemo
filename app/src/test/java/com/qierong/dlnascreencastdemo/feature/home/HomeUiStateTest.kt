@@ -6,11 +6,11 @@ import org.junit.Test
 
 class HomeUiStateTest {
     @Test
-    fun initialHomeState_marksEncoderPhaseAndMetricsAsUnmeasured() {
+    fun initialHomeState_marksLocalStreamPhaseAndMetricsBoundary() {
         val state = HomeUiState()
 
-        assertEquals("PR 4 / 7：H.264 编码参数与实际配置展示", state.currentPhase)
-        assertTrue(state.metricsNotice.contains("优先选择 1080P 编码画布"))
-        assertTrue(state.metricsNotice.contains("性能仍未实测"))
+        assertEquals("PR 5 / 7：本地 MPEG-TS HTTP 流服务与 PC 播放测试", state.currentPhase)
+        assertTrue(state.metricsNotice.contains("AAC 音频未实现"))
+        assertTrue(state.metricsNotice.contains("延迟仍未实测"))
     }
 }

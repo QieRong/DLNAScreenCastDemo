@@ -10,6 +10,7 @@ class CaptureResourceCleanupTest {
         val cleanup = CaptureResourceCleanup(
             releaseVirtualDisplay = { actions += "releaseVirtualDisplay" },
             releaseVideoEncoder = { actions += "releaseVideoEncoder" },
+            releaseStreamServer = { actions += "releaseStreamServer" },
             unregisterProjectionCallback = { actions += "unregisterProjectionCallback" },
             stopProjection = { actions += "stopProjection" },
             stopWorkerThread = { actions += "stopWorkerThread" },
@@ -22,6 +23,7 @@ class CaptureResourceCleanupTest {
             listOf(
                 "releaseVirtualDisplay",
                 "releaseVideoEncoder",
+                "releaseStreamServer",
                 "unregisterProjectionCallback",
                 "stopProjection",
                 "stopWorkerThread",
@@ -36,6 +38,7 @@ class CaptureResourceCleanupTest {
         val cleanup = CaptureResourceCleanup(
             releaseVirtualDisplay = { actions += "releaseVirtualDisplay" },
             releaseVideoEncoder = { actions += "releaseVideoEncoder" },
+            releaseStreamServer = { actions += "releaseStreamServer" },
             unregisterProjectionCallback = { actions += "unregisterProjectionCallback" },
             stopProjection = { actions += "stopProjection" },
             stopWorkerThread = { actions += "stopWorkerThread" },
@@ -47,6 +50,7 @@ class CaptureResourceCleanupTest {
             listOf(
                 "releaseVirtualDisplay",
                 "releaseVideoEncoder",
+                "releaseStreamServer",
                 "unregisterProjectionCallback",
                 "stopWorkerThread",
             ),

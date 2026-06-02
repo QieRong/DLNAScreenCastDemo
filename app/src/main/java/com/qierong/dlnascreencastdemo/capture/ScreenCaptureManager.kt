@@ -11,6 +11,9 @@ import com.qierong.dlnascreencastdemo.encoder.AndroidAvcEncoderCatalog
 import com.qierong.dlnascreencastdemo.encoder.ActiveEncoderConfig
 import com.qierong.dlnascreencastdemo.encoder.EncoderConfigSelector
 import com.qierong.dlnascreencastdemo.encoder.VideoEncoder
+import com.qierong.dlnascreencastdemo.stream.LocalStreamServer
+import com.qierong.dlnascreencastdemo.stream.MpegTsStreamPipeline
+import com.qierong.dlnascreencastdemo.stream.StreamUrlProvider
 import java.util.concurrent.atomic.AtomicBoolean
 
 internal class ScreenCaptureManager(
@@ -22,6 +25,8 @@ internal class ScreenCaptureManager(
     private val onReleased: () -> Unit,
     private val encoderCatalog: AndroidAvcEncoderCatalog = AndroidAvcEncoderCatalog(),
     private val encoderConfigSelector: EncoderConfigSelector = EncoderConfigSelector(),
+    private val streamServer: LocalStreamServer = LocalStreamServer(),
+    private val streamUrlProvider: StreamUrlProvider = StreamUrlProvider(),
 ) {
     private val released = AtomicBoolean(false)
     private val releaseNotified = AtomicBoolean(false)
@@ -30,6 +35,7 @@ internal class ScreenCaptureManager(
     private var callbackRegistered = false
     private var videoEncoder: VideoEncoder? = null
     private var sessionInfo: CaptureSessionInfo? = null
+    private var streamUrl: String? = null
     private val resizeDebouncer = LatestValueDebouncer<CaptureConfig>(
         schedule = { runnable -> workerHandler.postDelayed(runnable, RESIZE_DEBOUNCE_MS) },
         cancel = workerHandler::removeCallbacks,
@@ -73,6 +79,11 @@ internal class ScreenCaptureManager(
 
     fun start(initialConfig: CaptureConfig) {
         check(!released.get()) { "屏幕采集会话已释放" }
+        val streamPort = streamServer.start()
+        streamUrl = requireNotNull(streamUrlProvider.resolve(streamPort)) {
+            "未检测到可用于 PC 播放的局域网 IPv4 地址"
+        }
+        Log.i(STREAM_TAG, "本地流地址：$streamUrl")
         val initialEncoder = createVideoEncoder(initialConfig)
         videoEncoder = initialEncoder
         mediaProjection.registerCallback(projectionCallback, workerHandler)
@@ -85,7 +96,7 @@ internal class ScreenCaptureManager(
         ) {
             "无法创建 VirtualDisplay"
         }
-        val initialSession = CaptureSessionInfo(initialConfig, initialEncoder.activeConfig)
+        val initialSession = CaptureSessionInfo(initialConfig, initialEncoder.activeConfig, streamUrl)
         sessionInfo = initialSession
         Log.i(
             TAG,
@@ -115,7 +126,7 @@ internal class ScreenCaptureManager(
             return
         }
         if (currentSession.encoderConfig.hasSameCanvas(targetEncoderConfig)) {
-            val updatedSession = CaptureSessionInfo(config, currentSession.encoderConfig)
+            val updatedSession = CaptureSessionInfo(config, currentSession.encoderConfig, streamUrl)
             sessionInfo = updatedSession
             Log.d(TAG, "编码画布未变化，忽略重复重建请求")
             onSessionChanged(updatedSession)
@@ -123,7 +134,7 @@ internal class ScreenCaptureManager(
         }
         onReconfiguring(currentSession, config)
         val replacement = runCatching {
-            VideoEncoder.create(targetEncoderConfig, ::failAndRelease)
+            createVideoEncoder(targetEncoderConfig)
         }.getOrElse { exception ->
             failAndRelease(exception.message ?: "无法重建 H.264 编码器")
             return
@@ -144,7 +155,7 @@ internal class ScreenCaptureManager(
         val previous = videoEncoder
         videoEncoder = replacement
         previous?.stop()
-        val updatedSession = CaptureSessionInfo(config, replacement.activeConfig)
+        val updatedSession = CaptureSessionInfo(config, replacement.activeConfig, streamUrl)
         sessionInfo = updatedSession
         Log.i(
             TAG,
@@ -155,7 +166,18 @@ internal class ScreenCaptureManager(
     }
 
     private fun createVideoEncoder(sourceConfig: CaptureConfig): VideoEncoder =
-        VideoEncoder.create(selectEncoderConfig(sourceConfig), ::failAndRelease)
+        createVideoEncoder(selectEncoderConfig(sourceConfig))
+
+    private fun createVideoEncoder(activeConfig: ActiveEncoderConfig): VideoEncoder =
+        VideoEncoder.create(
+            activeConfig = activeConfig,
+            onError = ::failAndRelease,
+            outputSink = MpegTsStreamPipeline { data, replayOnConnect ->
+                streamServer.publish(data, replayOnConnect)
+            }.also {
+                streamServer.clearReplayChunk()
+            },
+        )
 
     private fun selectEncoderConfig(sourceConfig: CaptureConfig): ActiveEncoderConfig =
         requireNotNull(
@@ -189,6 +211,10 @@ internal class ScreenCaptureManager(
                 videoEncoder?.stop()
                 videoEncoder = null
             },
+            releaseStreamServer = {
+                streamServer.stop()
+                Log.i(STREAM_TAG, "本地流服务已停止")
+            },
             unregisterProjectionCallback = {
                 if (callbackRegistered) {
                     mediaProjection.unregisterCallback(projectionCallback)
@@ -205,6 +231,7 @@ internal class ScreenCaptureManager(
 
     companion object {
         private const val TAG = "ScreenCapture"
+        private const val STREAM_TAG = "StreamServer"
         private const val VIRTUAL_DISPLAY_NAME = "DLNAScreenCastDemo"
         private const val RESIZE_DEBOUNCE_MS = 250L
     }
