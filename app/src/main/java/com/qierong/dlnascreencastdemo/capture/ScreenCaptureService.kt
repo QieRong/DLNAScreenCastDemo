@@ -76,7 +76,9 @@ class ScreenCaptureService : Service() {
             val manager = ScreenCaptureManager(
                 mediaProjection = mediaProjection,
                 configProvider = configProvider,
-                onConfigChanged = stateStore::markCapturing,
+                onSessionChanged = stateStore::markCapturing,
+                onReconfiguring = stateStore::markReconfiguring,
+                onError = ::failAndStop,
                 onReleased = ::finishStop,
             )
             captureManager = manager

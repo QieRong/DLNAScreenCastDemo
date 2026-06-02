@@ -8,9 +8,8 @@ class CaptureResourceCleanupTest {
     fun release_runsInRequiredOrderOnlyOnce() {
         val actions = mutableListOf<String>()
         val cleanup = CaptureResourceCleanup(
-            stopFrameConsumer = { actions += "stopFrameConsumer" },
             releaseVirtualDisplay = { actions += "releaseVirtualDisplay" },
-            closeFrameSurface = { actions += "closeFrameSurface" },
+            releaseVideoEncoder = { actions += "releaseVideoEncoder" },
             unregisterProjectionCallback = { actions += "unregisterProjectionCallback" },
             stopProjection = { actions += "stopProjection" },
             stopWorkerThread = { actions += "stopWorkerThread" },
@@ -21,9 +20,8 @@ class CaptureResourceCleanupTest {
 
         assertEquals(
             listOf(
-                "stopFrameConsumer",
                 "releaseVirtualDisplay",
-                "closeFrameSurface",
+                "releaseVideoEncoder",
                 "unregisterProjectionCallback",
                 "stopProjection",
                 "stopWorkerThread",
@@ -36,9 +34,8 @@ class CaptureResourceCleanupTest {
     fun release_fromProjectionCallback_doesNotStopProjectionAgain() {
         val actions = mutableListOf<String>()
         val cleanup = CaptureResourceCleanup(
-            stopFrameConsumer = { actions += "stopFrameConsumer" },
             releaseVirtualDisplay = { actions += "releaseVirtualDisplay" },
-            closeFrameSurface = { actions += "closeFrameSurface" },
+            releaseVideoEncoder = { actions += "releaseVideoEncoder" },
             unregisterProjectionCallback = { actions += "unregisterProjectionCallback" },
             stopProjection = { actions += "stopProjection" },
             stopWorkerThread = { actions += "stopWorkerThread" },
@@ -48,9 +45,8 @@ class CaptureResourceCleanupTest {
 
         assertEquals(
             listOf(
-                "stopFrameConsumer",
                 "releaseVirtualDisplay",
-                "closeFrameSurface",
+                "releaseVideoEncoder",
                 "unregisterProjectionCallback",
                 "stopWorkerThread",
             ),

@@ -7,20 +7,34 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
 import android.view.Surface
+import com.qierong.dlnascreencastdemo.encoder.AndroidAvcEncoderCatalog
+import com.qierong.dlnascreencastdemo.encoder.ActiveEncoderConfig
+import com.qierong.dlnascreencastdemo.encoder.EncoderConfigSelector
+import com.qierong.dlnascreencastdemo.encoder.VideoEncoder
 import java.util.concurrent.atomic.AtomicBoolean
 
 internal class ScreenCaptureManager(
     private val mediaProjection: MediaProjection,
     private val configProvider: AndroidCaptureConfigProvider,
-    private val onConfigChanged: (CaptureConfig) -> Unit,
+    private val onSessionChanged: (CaptureSessionInfo) -> Unit,
+    private val onReconfiguring: (CaptureSessionInfo, CaptureConfig) -> Unit,
+    private val onError: (String) -> Unit,
     private val onReleased: () -> Unit,
+    private val encoderCatalog: AndroidAvcEncoderCatalog = AndroidAvcEncoderCatalog(),
+    private val encoderConfigSelector: EncoderConfigSelector = EncoderConfigSelector(),
 ) {
     private val released = AtomicBoolean(false)
     private val releaseNotified = AtomicBoolean(false)
     private val workerThread = HandlerThread("ScreenCaptureFrames").apply { start() }
     private val workerHandler = Handler(workerThread.looper)
     private var callbackRegistered = false
-    private var frameSurface: DiscardingFrameSurface? = null
+    private var videoEncoder: VideoEncoder? = null
+    private var sessionInfo: CaptureSessionInfo? = null
+    private val resizeDebouncer = LatestValueDebouncer<CaptureConfig>(
+        schedule = { runnable -> workerHandler.postDelayed(runnable, RESIZE_DEBOUNCE_MS) },
+        cancel = workerHandler::removeCallbacks,
+        consume = ::applyResize,
+    )
     private val virtualDisplayLifecycle = VirtualDisplayLifecycle<Surface, VirtualDisplay>(
         createDisplay = { config, surface ->
             mediaProjection.createVirtualDisplay(
@@ -49,7 +63,7 @@ internal class ScreenCaptureManager(
         override fun onCapturedContentResize(width: Int, height: Int) {
             if (width <= 0 || height <= 0) return
             val densityDpi = configProvider.current().densityDpi
-            resize(CaptureConfig(width, height, densityDpi))
+            resizeDebouncer.submit(CaptureConfig(width, height, densityDpi))
         }
 
         override fun onCapturedContentVisibilityChanged(isVisible: Boolean) {
@@ -59,19 +73,31 @@ internal class ScreenCaptureManager(
 
     fun start(initialConfig: CaptureConfig) {
         check(!released.get()) { "屏幕采集会话已释放" }
-        val initialFrameSurface = DiscardingFrameSurface.create(initialConfig, workerHandler)
-        frameSurface = initialFrameSurface
+        val initialEncoder = createVideoEncoder(initialConfig)
+        videoEncoder = initialEncoder
         mediaProjection.registerCallback(projectionCallback, workerHandler)
         callbackRegistered = true
-        check(virtualDisplayLifecycle.create(initialConfig, initialFrameSurface.surface)) {
+        check(
+            virtualDisplayLifecycle.create(
+                initialConfig.toDisplayConfig(initialEncoder.activeConfig),
+                initialEncoder.inputSurface,
+            ),
+        ) {
             "无法创建 VirtualDisplay"
         }
-        Log.i(TAG, "屏幕采集已启动：${initialConfig.width}x${initialConfig.height}")
-        onConfigChanged(initialConfig)
+        val initialSession = CaptureSessionInfo(initialConfig, initialEncoder.activeConfig)
+        sessionInfo = initialSession
+        Log.i(
+            TAG,
+            "屏幕采集已启动：source=${initialConfig.width}x${initialConfig.height}，" +
+                "encoder=${initialEncoder.activeConfig.config.width}x" +
+                "${initialEncoder.activeConfig.config.height}",
+        )
+        onSessionChanged(initialSession)
     }
 
     fun refreshConfig() {
-        resize(configProvider.current())
+        resizeDebouncer.submit(configProvider.current())
     }
 
     fun stop() {
@@ -79,44 +105,89 @@ internal class ScreenCaptureManager(
     }
 
     @Synchronized
-    private fun resize(config: CaptureConfig) {
+    private fun applyResize(config: CaptureConfig) {
         if (released.get()) return
-        if (!virtualDisplayLifecycle.needsResize(config)) return
-        val replacement = runCatching {
-            DiscardingFrameSurface.create(config, workerHandler)
+        val currentSession = sessionInfo ?: return
+        val targetEncoderConfig = runCatching {
+            selectEncoderConfig(config)
         }.getOrElse { exception ->
-            Log.e(TAG, "创建替换 Surface 失败", exception)
+            failAndRelease(exception.message ?: "无法选择 H.264 编码参数")
             return
         }
-        val resized = runCatching {
-            virtualDisplayLifecycle.resize(config, replacement.surface)
+        if (currentSession.encoderConfig.hasSameCanvas(targetEncoderConfig)) {
+            val updatedSession = CaptureSessionInfo(config, currentSession.encoderConfig)
+            sessionInfo = updatedSession
+            Log.d(TAG, "编码画布未变化，忽略重复重建请求")
+            onSessionChanged(updatedSession)
+            return
+        }
+        onReconfiguring(currentSession, config)
+        val replacement = runCatching {
+            VideoEncoder.create(targetEncoderConfig, ::failAndRelease)
         }.getOrElse { exception ->
-            Log.e(TAG, "调整屏幕采集尺寸失败", exception)
-            replacement.stopConsuming()
-            replacement.close()
+            failAndRelease(exception.message ?: "无法重建 H.264 编码器")
+            return
+        }
+        val displayConfig = config.toDisplayConfig(replacement.activeConfig)
+        val resized = runCatching {
+            virtualDisplayLifecycle.resize(displayConfig, replacement.inputSurface)
+        }.getOrElse { exception ->
+            replacement.stop()
+            failAndRelease(exception.message ?: "无法替换 H.264 编码 Surface")
             return
         }
         if (!resized) {
-            replacement.stopConsuming()
-            replacement.close()
+            replacement.stop()
+            failAndRelease("无法替换 H.264 编码 Surface")
             return
         }
-        val previous = frameSurface
-        frameSurface = replacement
-        previous?.stopConsuming()
-        previous?.close()
-        Log.i(TAG, "屏幕采集尺寸已更新：${config.width}x${config.height}")
-        onConfigChanged(config)
+        val previous = videoEncoder
+        videoEncoder = replacement
+        previous?.stop()
+        val updatedSession = CaptureSessionInfo(config, replacement.activeConfig)
+        sessionInfo = updatedSession
+        Log.i(
+            TAG,
+            "H.264 编码器已按尺寸变化重建：source=${config.width}x${config.height}，" +
+                "encoder=${displayConfig.width}x${displayConfig.height}",
+        )
+        onSessionChanged(updatedSession)
     }
 
-    private fun release(stopProjection: Boolean) {
+    private fun createVideoEncoder(sourceConfig: CaptureConfig): VideoEncoder =
+        VideoEncoder.create(selectEncoderConfig(sourceConfig), ::failAndRelease)
+
+    private fun selectEncoderConfig(sourceConfig: CaptureConfig): ActiveEncoderConfig =
+        requireNotNull(
+            encoderConfigSelector.select(sourceConfig, encoderCatalog.listCapabilities()),
+        ) {
+            "当前设备没有支持标准编码画布的 H.264 Surface encoder"
+        }
+
+    private fun CaptureConfig.toDisplayConfig(encoderConfig: ActiveEncoderConfig): CaptureConfig =
+        CaptureConfig(
+            width = encoderConfig.config.width,
+            height = encoderConfig.config.height,
+            densityDpi = densityDpi,
+        )
+
+    private fun ActiveEncoderConfig.hasSameCanvas(other: ActiveEncoderConfig): Boolean =
+        config.width == other.config.width && config.height == other.config.height
+
+    private fun failAndRelease(detail: String) {
+        Log.e(TAG, detail)
+        release(stopProjection = true, notifyReleased = false)
+        onError(detail)
+    }
+
+    private fun release(stopProjection: Boolean, notifyReleased: Boolean = true) {
         if (!released.compareAndSet(false, true)) return
+        resizeDebouncer.cancel()
         val cleanup = CaptureResourceCleanup(
-            stopFrameConsumer = { frameSurface?.stopConsuming() },
             releaseVirtualDisplay = virtualDisplayLifecycle::release,
-            closeFrameSurface = {
-                frameSurface?.close()
-                frameSurface = null
+            releaseVideoEncoder = {
+                videoEncoder?.stop()
+                videoEncoder = null
             },
             unregisterProjectionCallback = {
                 if (callbackRegistered) {
@@ -129,11 +200,12 @@ internal class ScreenCaptureManager(
         )
         cleanup.release(stopProjection)
         Log.i(TAG, "屏幕采集资源释放完成")
-        if (releaseNotified.compareAndSet(false, true)) onReleased()
+        if (notifyReleased && releaseNotified.compareAndSet(false, true)) onReleased()
     }
 
     companion object {
         private const val TAG = "ScreenCapture"
         private const val VIRTUAL_DISPLAY_NAME = "DLNAScreenCastDemo"
+        private const val RESIZE_DEBOUNCE_MS = 250L
     }
 }

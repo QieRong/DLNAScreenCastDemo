@@ -6,10 +6,11 @@ import org.junit.Test
 
 class HomeUiStateTest {
     @Test
-    fun initialHomeState_marksCapturePhaseAndMetricsAsUnmeasured() {
+    fun initialHomeState_marksEncoderPhaseAndMetricsAsUnmeasured() {
         val state = HomeUiState()
 
-        assertEquals("PR 3 / 7：MediaProjection 屏幕采集骨架", state.currentPhase)
-        assertTrue(state.metricsNotice.contains("尚未实测"))
+        assertEquals("PR 4 / 7：H.264 编码参数与实际配置展示", state.currentPhase)
+        assertTrue(state.metricsNotice.contains("优先选择 1080P 编码画布"))
+        assertTrue(state.metricsNotice.contains("性能仍未实测"))
     }
 }

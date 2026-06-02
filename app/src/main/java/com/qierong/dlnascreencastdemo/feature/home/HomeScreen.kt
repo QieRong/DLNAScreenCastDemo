@@ -20,9 +20,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.qierong.dlnascreencastdemo.capture.CaptureConfig
+import com.qierong.dlnascreencastdemo.capture.CaptureSessionInfo
 import com.qierong.dlnascreencastdemo.capture.CaptureState
 import com.qierong.dlnascreencastdemo.capture.hasActiveSession
 import com.qierong.dlnascreencastdemo.dlna.DlnaDevice
+import com.qierong.dlnascreencastdemo.encoder.ActiveEncoderConfig
+import com.qierong.dlnascreencastdemo.encoder.BitrateMode
+import com.qierong.dlnascreencastdemo.encoder.EncoderConfig
 import com.qierong.dlnascreencastdemo.feature.device.DeviceDiscoveryStatus
 import com.qierong.dlnascreencastdemo.feature.device.DeviceListUiState
 import com.qierong.dlnascreencastdemo.ui.theme.DLNAScreenCastDemoTheme
@@ -116,6 +120,9 @@ private fun HomeContent(
             CaptureStatusCard(state = captureState)
         }
         item {
+            EncoderStatusCard(state = captureState)
+        }
+        item {
             DiscoveryStatusCard(status = deviceState.status)
         }
         if (deviceState.status == DeviceDiscoveryStatus.Empty) {
@@ -163,12 +170,52 @@ private fun CaptureStatusCard(
         CaptureState.Idle -> "未采集。点击“开始采集”后，系统会请求本次会话的录屏授权。"
         CaptureState.RequestingPermission -> "正在等待系统录屏授权。每次开始采集都必须重新授权。"
         CaptureState.Starting -> "授权成功，正在启动屏幕采集前台服务。"
-        is CaptureState.Capturing -> "采集中：${state.config.width} x ${state.config.height} px"
+        is CaptureState.Capturing -> state.sessionInfo.sourceConfig.run {
+            "采集中：源画面 $width x $height px"
+        }
+        is CaptureState.Reconfiguring -> state.targetSourceConfig.run {
+            "正在按最新尺寸重建 H.264 编码器：源画面 $width x $height px"
+        }
         CaptureState.Stopping -> "正在停止采集并释放资源。"
         CaptureState.PermissionDenied -> "系统录屏授权已拒绝，未启动采集。"
         is CaptureState.Error -> "屏幕采集失败：${state.detail}"
     }
     StatusCard(title = "屏幕采集状态", detail = detail, modifier = modifier)
+}
+
+@Composable
+private fun EncoderStatusCard(
+    state: CaptureState,
+    modifier: Modifier = Modifier,
+) {
+    val sessionInfo = when (state) {
+        is CaptureState.Capturing -> state.sessionInfo
+        is CaptureState.Reconfiguring -> state.sessionInfo
+        else -> null
+    }
+    val detail = sessionInfo?.encoderConfig?.toUiText()
+        ?: """
+            优先选择 1080P 编码画布，实际配置取决于设备 H.264 encoder capabilities。
+            当前尚未启动 H.264 编码。性能仍未实测。
+        """.trimIndent()
+    StatusCard(title = "视频编码参数", detail = detail, modifier = modifier)
+}
+
+private fun ActiveEncoderConfig.toUiText(): String {
+    val bitrateModeText = when (config.bitrateMode) {
+        BitrateMode.CBR -> "CBR"
+        BitrateMode.DEFAULT -> "默认 / 非 CBR"
+    }
+    return """
+        编码器：$codecName
+        实际编码画布：${config.width} x ${config.height}
+        已配置视频码率：${config.videoBitrate / 1_000_000.0} Mbps
+        码率模式：$bitrateModeText
+        帧率：${config.frameRate} fps
+        关键帧间隔：${config.iFrameIntervalSeconds} 秒
+        降级：${if (isDegraded) "是" else "否"}
+        说明：优先选择 1080P 编码画布，实际配置取决于设备 H.264 encoder capabilities；性能仍未实测。
+    """.trimIndent()
 }
 
 @Composable
@@ -283,7 +330,19 @@ private fun HomeScreenDarkPreview() {
                 ),
             ),
             captureState = CaptureState.Capturing(
-                CaptureConfig(width = 1080, height = 2400, densityDpi = 440),
+                CaptureSessionInfo(
+                    sourceConfig = CaptureConfig(width = 1080, height = 2400, densityDpi = 440),
+                    encoderConfig = ActiveEncoderConfig(
+                        codecName = "preview.avc.encoder",
+                        config = EncoderConfig(
+                            width = 1080,
+                            height = 1920,
+                            videoBitrate = 8_000_000,
+                            bitrateMode = BitrateMode.CBR,
+                        ),
+                        isDegraded = false,
+                    ),
+                ),
             ),
             onSearchDevices = {},
             onStartCapture = {},
