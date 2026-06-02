@@ -6,10 +6,10 @@ import org.junit.Test
 
 class HomeUiStateTest {
     @Test
-    fun initialHomeState_marksDiscoveryPhaseAndMetricsAsUnmeasured() {
+    fun initialHomeState_marksCapturePhaseAndMetricsAsUnmeasured() {
         val state = HomeUiState()
 
-        assertEquals("PR 2 / 7：DLNA / UPnP Renderer 设备发现", state.currentPhase)
+        assertEquals("PR 3 / 7：MediaProjection 屏幕采集骨架", state.currentPhase)
         assertTrue(state.metricsNotice.contains("尚未实测"))
     }
 }
