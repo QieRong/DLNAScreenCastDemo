@@ -8,6 +8,7 @@ import android.os.HandlerThread
 import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
+import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicBoolean
 
 class VideoEncoder private constructor(
@@ -16,6 +17,7 @@ class VideoEncoder private constructor(
     val inputSurface: Surface,
     private val workerThread: HandlerThread,
     private val onError: (String) -> Unit,
+    private val outputSink: EncodedVideoOutputSink,
 ) {
     private val workerHandler = Handler(workerThread.looper)
     private val outputTracker = EncoderOutputTracker()
@@ -72,12 +74,26 @@ class VideoEncoder private constructor(
                 else -> {
                     if (outputIndex < 0) return drainedAnyBuffer
                     drainedAnyBuffer = true
+                    val encodedBytes = codec.getOutputBuffer(outputIndex)
+                        ?.copyEncodedBytes(bufferInfo.offset, bufferInfo.size)
+                        ?: ByteArray(0)
                     val event = outputTracker.recordBuffer(
                         isCodecConfig =
                             bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0,
                         isKeyFrame =
                             bufferInfo.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0,
                     )
+                    when {
+                        event.isCodecConfig && encodedBytes.isNotEmpty() ->
+                            outputSink.onCodecConfig(encodedBytes)
+
+                        !event.isCodecConfig && encodedBytes.isNotEmpty() ->
+                            outputSink.onAccessUnit(
+                                data = encodedBytes,
+                                presentationTimeUs = bufferInfo.presentationTimeUs,
+                                isKeyFrame = bufferInfo.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0,
+                            )
+                    }
                     logOutputEvent(event)
                     codec.releaseOutputBuffer(outputIndex, false)
                 }
@@ -89,6 +105,10 @@ class VideoEncoder private constructor(
         val hasCsd0 = format.containsKey(CSD_0)
         val hasCsd1 = format.containsKey(CSD_1)
         outputTracker.recordOutputFormat(hasCsd0, hasCsd1)
+        outputSink.onOutputFormat(
+            csd0 = format.byteBufferValue(CSD_0),
+            csd1 = format.byteBufferValue(CSD_1),
+        )
         Log.i(
             TAG,
             "H.264 actual output format：" +
@@ -121,6 +141,9 @@ class VideoEncoder private constructor(
     private fun MediaFormat.stringValue(key: String): String =
         if (containsKey(key)) getString(key).orEmpty() else "未提供"
 
+    private fun MediaFormat.byteBufferValue(key: String): ByteArray? =
+        if (containsKey(key)) getByteBuffer(key)?.copyRemainingBytes() else null
+
     companion object {
         private const val TAG = "Encoder"
         private const val CSD_0 = "csd-0"
@@ -133,6 +156,7 @@ class VideoEncoder private constructor(
         fun create(
             activeConfig: ActiveEncoderConfig,
             onError: (String) -> Unit,
+            outputSink: EncodedVideoOutputSink = EncodedVideoOutputSink.None,
         ): VideoEncoder {
             val config = activeConfig.config
             val format = MediaFormat.createVideoFormat(config.mimeType, config.width, config.height)
@@ -170,6 +194,7 @@ class VideoEncoder private constructor(
                     inputSurface = inputSurface,
                     workerThread = workerThread,
                     onError = onError,
+                    outputSink = outputSink,
                 )
             } catch (exception: Exception) {
                 runCatching(codec::release)
