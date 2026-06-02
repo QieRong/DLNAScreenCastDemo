@@ -19,6 +19,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.qierong.dlnascreencastdemo.capture.CaptureConfig
+import com.qierong.dlnascreencastdemo.capture.CaptureState
+import com.qierong.dlnascreencastdemo.capture.hasActiveSession
 import com.qierong.dlnascreencastdemo.dlna.DlnaDevice
 import com.qierong.dlnascreencastdemo.feature.device.DeviceDiscoveryStatus
 import com.qierong.dlnascreencastdemo.feature.device.DeviceListUiState
@@ -29,7 +32,10 @@ import com.qierong.dlnascreencastdemo.ui.theme.DLNAScreenCastDemoTheme
 fun HomeScreen(
     state: HomeUiState,
     deviceState: DeviceListUiState,
+    captureState: CaptureState,
     onSearchDevices: () -> Unit,
+    onStartCapture: () -> Unit,
+    onStopCapture: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Scaffold(
@@ -41,7 +47,10 @@ fun HomeScreen(
         HomeContent(
             state = state,
             deviceState = deviceState,
+            captureState = captureState,
             onSearchDevices = onSearchDevices,
+            onStartCapture = onStartCapture,
+            onStopCapture = onStopCapture,
             contentPadding = contentPadding,
         )
     }
@@ -51,7 +60,10 @@ fun HomeScreen(
 private fun HomeContent(
     state: HomeUiState,
     deviceState: DeviceListUiState,
+    captureState: CaptureState,
     onSearchDevices: () -> Unit,
+    onStartCapture: () -> Unit,
+    onStopCapture: () -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
 ) {
@@ -84,13 +96,24 @@ private fun HomeContent(
                     Text(text = if (deviceState.isSearching) "正在搜索设备..." else "搜索 DLNA 设备")
                 }
                 Button(
-                    onClick = {},
-                    enabled = false,
+                    onClick = onStartCapture,
+                    enabled = !captureState.hasActiveSession,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text(text = "开始投屏（后续 PR 实现）")
+                    Text(text = "开始采集")
+                }
+                Button(
+                    onClick = onStopCapture,
+                    enabled = captureState.hasActiveSession &&
+                        captureState != CaptureState.RequestingPermission,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(text = "停止采集")
                 }
             }
+        }
+        item {
+            CaptureStatusCard(state = captureState)
         }
         item {
             DiscoveryStatusCard(status = deviceState.status)
@@ -129,6 +152,23 @@ private fun HomeContent(
             }
         }
     }
+}
+
+@Composable
+private fun CaptureStatusCard(
+    state: CaptureState,
+    modifier: Modifier = Modifier,
+) {
+    val detail = when (state) {
+        CaptureState.Idle -> "未采集。点击“开始采集”后，系统会请求本次会话的录屏授权。"
+        CaptureState.RequestingPermission -> "正在等待系统录屏授权。每次开始采集都必须重新授权。"
+        CaptureState.Starting -> "授权成功，正在启动屏幕采集前台服务。"
+        is CaptureState.Capturing -> "采集中：${state.config.width} x ${state.config.height} px"
+        CaptureState.Stopping -> "正在停止采集并释放资源。"
+        CaptureState.PermissionDenied -> "系统录屏授权已拒绝，未启动采集。"
+        is CaptureState.Error -> "屏幕采集失败：${state.detail}"
+    }
+    StatusCard(title = "屏幕采集状态", detail = detail, modifier = modifier)
 }
 
 @Composable
@@ -213,7 +253,10 @@ private fun HomeScreenPreview() {
         HomeScreen(
             state = HomeUiState(),
             deviceState = DeviceListUiState(status = DeviceDiscoveryStatus.Empty),
+            captureState = CaptureState.Idle,
             onSearchDevices = {},
+            onStartCapture = {},
+            onStopCapture = {},
         )
     }
 }
@@ -239,7 +282,12 @@ private fun HomeScreenDarkPreview() {
                     ),
                 ),
             ),
+            captureState = CaptureState.Capturing(
+                CaptureConfig(width = 1080, height = 2400, densityDpi = 440),
+            ),
             onSearchDevices = {},
+            onStartCapture = {},
+            onStopCapture = {},
         )
     }
 }
