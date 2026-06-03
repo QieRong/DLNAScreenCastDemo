@@ -20,6 +20,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qierong.dlnascreencastdemo.capture.CapturePermissionCoordinator
 import com.qierong.dlnascreencastdemo.capture.ScreenCaptureService
+import com.qierong.dlnascreencastdemo.feature.casting.DlnaControlViewModel
 import com.qierong.dlnascreencastdemo.feature.casting.ScreenCaptureViewModel
 import com.qierong.dlnascreencastdemo.feature.device.DeviceListViewModel
 import com.qierong.dlnascreencastdemo.feature.device.DeviceListViewModelFactory
@@ -39,6 +40,8 @@ class MainActivity : ComponentActivity() {
                 val deviceState by deviceListViewModel.uiState.collectAsStateWithLifecycle()
                 val captureViewModel: ScreenCaptureViewModel = viewModel()
                 val captureState by captureViewModel.uiState.collectAsStateWithLifecycle()
+                val dlnaControlViewModel: DlnaControlViewModel = viewModel()
+                val dlnaControlState by dlnaControlViewModel.uiState.collectAsStateWithLifecycle()
                 val projectionManager = remember {
                     getSystemService(MediaProjectionManager::class.java)
                 }
@@ -91,6 +94,7 @@ class MainActivity : ComponentActivity() {
                     state = HomeUiState(),
                     deviceState = deviceState,
                     captureState = captureState,
+                    dlnaControlState = dlnaControlState,
                     onSearchDevices = {
                         val needsNearbyWifiPermission =
                             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -127,6 +131,12 @@ class MainActivity : ComponentActivity() {
                     onStopCapture = {
                         ScreenCaptureService.stop(applicationContext)
                     },
+                    onSelectRenderer = dlnaControlViewModel::selectDevice,
+                    onSendToRenderer = {
+                        dlnaControlViewModel.sendToRenderer(captureState)
+                    },
+                    onPauseRenderer = dlnaControlViewModel::pause,
+                    onStopRenderer = dlnaControlViewModel::stopRemotePlayback,
                 )
             }
         }
