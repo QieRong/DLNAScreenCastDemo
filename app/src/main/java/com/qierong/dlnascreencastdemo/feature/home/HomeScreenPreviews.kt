@@ -6,6 +6,7 @@ import com.qierong.dlnascreencastdemo.capture.CaptureConfig
 import com.qierong.dlnascreencastdemo.capture.CaptureSessionInfo
 import com.qierong.dlnascreencastdemo.capture.CaptureState
 import com.qierong.dlnascreencastdemo.dlna.DlnaDevice
+import com.qierong.dlnascreencastdemo.feature.casting.DlnaControlUiState
 import com.qierong.dlnascreencastdemo.encoder.ActiveEncoderConfig
 import com.qierong.dlnascreencastdemo.encoder.BitrateMode
 import com.qierong.dlnascreencastdemo.encoder.EncoderConfig
@@ -21,9 +22,14 @@ private fun HomeScreenPreview() {
             state = HomeUiState(),
             deviceState = DeviceListUiState(status = DeviceDiscoveryStatus.Empty),
             captureState = CaptureState.Idle,
+            dlnaControlState = DlnaControlUiState(),
             onSearchDevices = {},
             onStartCapture = {},
             onStopCapture = {},
+            onSelectRenderer = {},
+            onSendToRenderer = {},
+            onPauseRenderer = {},
+            onStopRenderer = {},
         )
     }
 }
@@ -45,7 +51,7 @@ private fun HomeScreenDarkPreview() {
                         modelName = "Kodi",
                         ipAddress = "192.168.1.20",
                         descriptionUrl = "http://192.168.1.20/device.xml",
-                        avTransportControlUrl = null,
+                        avTransportControlUrl = "http://192.168.1.20/AVTransport/control",
                     ),
                 ),
             ),
@@ -64,9 +70,25 @@ private fun HomeScreenDarkPreview() {
                     ),
                 ),
             ),
+            dlnaControlState = DlnaControlUiState(
+                selectedDevice = DlnaDevice(
+                    id = "uuid:kodi",
+                    udn = "uuid:kodi",
+                    friendlyName = "客厅 Kodi",
+                    manufacturer = "Kodi Foundation",
+                    modelName = "Kodi",
+                    ipAddress = "192.168.1.20",
+                    descriptionUrl = "http://192.168.1.20/device.xml",
+                    avTransportControlUrl = "http://192.168.1.20/AVTransport/control",
+                ),
+            ),
             onSearchDevices = {},
             onStartCapture = {},
             onStopCapture = {},
+            onSelectRenderer = {},
+            onSendToRenderer = {},
+            onPauseRenderer = {},
+            onStopRenderer = {},
         )
     }
 }

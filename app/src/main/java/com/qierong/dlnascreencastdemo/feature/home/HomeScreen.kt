@@ -12,6 +12,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -21,6 +22,9 @@ import androidx.compose.ui.unit.dp
 import com.qierong.dlnascreencastdemo.capture.CaptureState
 import com.qierong.dlnascreencastdemo.capture.hasActiveSession
 import com.qierong.dlnascreencastdemo.dlna.DlnaDevice
+import com.qierong.dlnascreencastdemo.feature.casting.DlnaControlFailureReason
+import com.qierong.dlnascreencastdemo.feature.casting.DlnaControlStatus
+import com.qierong.dlnascreencastdemo.feature.casting.DlnaControlUiState
 import com.qierong.dlnascreencastdemo.feature.device.DeviceDiscoveryStatus
 import com.qierong.dlnascreencastdemo.feature.device.DeviceListUiState
 
@@ -30,9 +34,14 @@ fun HomeScreen(
     state: HomeUiState,
     deviceState: DeviceListUiState,
     captureState: CaptureState,
+    dlnaControlState: DlnaControlUiState,
     onSearchDevices: () -> Unit,
     onStartCapture: () -> Unit,
     onStopCapture: () -> Unit,
+    onSelectRenderer: (DlnaDevice) -> Unit,
+    onSendToRenderer: () -> Unit,
+    onPauseRenderer: () -> Unit,
+    onStopRenderer: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Scaffold(
@@ -45,9 +54,14 @@ fun HomeScreen(
             state = state,
             deviceState = deviceState,
             captureState = captureState,
+            dlnaControlState = dlnaControlState,
             onSearchDevices = onSearchDevices,
             onStartCapture = onStartCapture,
             onStopCapture = onStopCapture,
+            onSelectRenderer = onSelectRenderer,
+            onSendToRenderer = onSendToRenderer,
+            onPauseRenderer = onPauseRenderer,
+            onStopRenderer = onStopRenderer,
             contentPadding = contentPadding,
         )
     }
@@ -57,9 +71,14 @@ private fun HomeContent(
     state: HomeUiState,
     deviceState: DeviceListUiState,
     captureState: CaptureState,
+    dlnaControlState: DlnaControlUiState,
     onSearchDevices: () -> Unit,
     onStartCapture: () -> Unit,
     onStopCapture: () -> Unit,
+    onSelectRenderer: (DlnaDevice) -> Unit,
+    onSendToRenderer: () -> Unit,
+    onPauseRenderer: () -> Unit,
+    onStopRenderer: () -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
 ) {
@@ -118,6 +137,14 @@ private fun HomeContent(
             StreamStatusCard(state = captureState)
         }
         item {
+            DlnaControlCard(
+                state = dlnaControlState,
+                onSendToRenderer = onSendToRenderer,
+                onPauseRenderer = onPauseRenderer,
+                onStopRenderer = onStopRenderer,
+            )
+        }
+        item {
             DiscoveryStatusCard(status = deviceState.status)
         }
         if (deviceState.status == DeviceDiscoveryStatus.Empty) {
@@ -136,7 +163,11 @@ private fun HomeContent(
                 items = deviceState.devices,
                 key = DlnaDevice::id,
             ) { device ->
-                DeviceCard(device = device)
+                DeviceCard(
+                    device = device,
+                    isSelected = dlnaControlState.selectedDevice?.id == device.id,
+                    onSelectRenderer = { onSelectRenderer(device) },
+                )
             }
         }
         item {
@@ -184,7 +215,7 @@ private fun DiscoveryStatusCard(
     modifier: Modifier = Modifier,
 ) {
     val detail = when (status) {
-        DeviceDiscoveryStatus.Idle -> "尚未搜索。当前 PR 已提供本地视频流，DLNA 播放控制尚未实现。"
+        DeviceDiscoveryStatus.Idle -> "尚未搜索。当前 PR 可对可控 Renderer 发送 AVTransport 播放控制。"
         DeviceDiscoveryStatus.Searching -> "正在通过 SSDP 搜索局域网 Renderer，请稍候。"
         DeviceDiscoveryStatus.Empty -> "未发现 Renderer，请查看下方排查说明。"
         is DeviceDiscoveryStatus.Success -> "已发现 ${status.count} 个 Renderer。"
@@ -204,7 +235,7 @@ private fun EmptyStateCard(modifier: Modifier = Modifier) {
             2. Kodi 需要开启 UPnP / DLNA。
             3. Windows 防火墙可能拦截局域网发现。
             4. 路由器 AP 隔离可能导致搜索不到。
-            5. 当前 PR 已提供本地视频流，DLNA 播放控制尚未实现。
+            5. 搜索到设备后，仍需设备提供 AVTransport controlURL 才能播控。
         """.trimIndent(),
         modifier = modifier,
     )
@@ -213,21 +244,117 @@ private fun EmptyStateCard(modifier: Modifier = Modifier) {
 @Composable
 private fun DeviceCard(
     device: DlnaDevice,
+    isSelected: Boolean,
+    onSelectRenderer: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val avTransportStatus = device.avTransportControlUrl
         ?: "不可用于后续播控：未提供 AVTransport controlURL"
-    StatusCard(
-        title = device.friendlyName,
-        detail = """
-            厂商：${device.manufacturer ?: "未提供"}
-            型号：${device.modelName ?: "未提供"}
-            IP：${device.ipAddress}
-            描述地址：${device.descriptionUrl}
-            AVTransport：$avTransportStatus
-        """.trimIndent(),
-        modifier = modifier,
-    )
+    Card(modifier = modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = if (isSelected) "${device.friendlyName}（已选择）" else device.friendlyName,
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                text = """
+                    厂商：${device.manufacturer ?: "未提供"}
+                    型号：${device.modelName ?: "未提供"}
+                    IP：${device.ipAddress}
+                    描述地址：${device.descriptionUrl}
+                    AVTransport：$avTransportStatus
+                """.trimIndent(),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            OutlinedButton(
+                onClick = onSelectRenderer,
+                enabled = !isSelected,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(text = if (isSelected) "已选择 Renderer" else "选择 Renderer")
+            }
+        }
+    }
+}
+
+@Composable
+private fun DlnaControlCard(
+    state: DlnaControlUiState,
+    onSendToRenderer: () -> Unit,
+    onPauseRenderer: () -> Unit,
+    onStopRenderer: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Card(modifier = modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = "DLNA 播放控制",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                text = dlnaControlDetail(state),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Button(
+                onClick = onSendToRenderer,
+                enabled = state.canSendToRenderer,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(text = "发送到 Renderer / 开始播放")
+            }
+            Button(
+                onClick = onPauseRenderer,
+                enabled = state.canPause,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(text = "暂停")
+            }
+            Button(
+                onClick = onStopRenderer,
+                enabled = state.canStopRemotePlayback,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(text = "停止播放")
+            }
+        }
+    }
+}
+
+private fun dlnaControlDetail(state: DlnaControlUiState): String {
+    val deviceLine = state.selectedDevice?.let { device ->
+        "目标：${device.friendlyName}（${device.ipAddress}）"
+    } ?: "目标：未选择 Renderer"
+    val statusLine = when (val status = state.status) {
+        DlnaControlStatus.NoRendererSelected -> "状态：未选择 Renderer。"
+        DlnaControlStatus.DeviceNotControllable -> "状态：设备不可控，缺少 AVTransport controlURL。"
+        DlnaControlStatus.LocalStreamNotStarted -> "状态：本地流未启动，请先开始采集生成 /live.ts。"
+        is DlnaControlStatus.InProgress -> "状态：正在执行 ${status.stage.label}。"
+        DlnaControlStatus.UriSet -> "状态：已设置播放地址，准备发送 Play。"
+        DlnaControlStatus.Playing -> "状态：正在播放。命令成功不等于画面已实测成功。"
+        DlnaControlStatus.Paused -> "状态：已暂停远端播放。"
+        DlnaControlStatus.Stopped -> "状态：已停止远端播放。"
+        is DlnaControlStatus.Failed ->
+            "状态：失败（${status.reason.toDisplayName()}）：${status.detail}"
+    }
+    return "$deviceLine\n$statusLine"
+}
+
+private fun DlnaControlFailureReason.toDisplayName(): String = when (this) {
+    DlnaControlFailureReason.NoRendererSelected -> "未选择 Renderer"
+    DlnaControlFailureReason.DeviceNotControllable -> "设备不可控"
+    DlnaControlFailureReason.LocalStreamNotStarted -> "本地流未启动"
+    DlnaControlFailureReason.SetUri -> "SetURI"
+    DlnaControlFailureReason.Play -> "Play"
+    DlnaControlFailureReason.Pause -> "Pause"
+    DlnaControlFailureReason.Stop -> "Stop"
+    DlnaControlFailureReason.Network -> "网络"
+    DlnaControlFailureReason.SoapFault -> "SOAP Fault"
 }
 
 @Composable

@@ -2,7 +2,7 @@
 
 Android 手机投屏技术 Demo。项目按 7 个小 PR 逐步完成一个可演示、可测试、可下载 APK 的原型。
 
-当前仓库开发到 **PR 5：本地 MPEG-TS HTTP 流服务与 PC 播放测试**。本阶段在 PR 4 H.264 编码链路之上，增加 Annex-B 规范化、MPEG-TS 封装、本地 `/live.ts` HTTP 服务、局域网 URL 展示、横竖屏重建后的持续推流，以及 PC 端抓流和 FFmpeg 解码验收。
+当前仓库开发到 **PR 6：DLNA AVTransport 播放控制**。本阶段在 PR 5 已验证的 `/live.ts` 本地 HTTP 流基础上，增加 Renderer 选择、`SetAVTransportURI`、`Play`、`Pause`、`Stop`、分阶段错误展示和 `DlnaControl` 日志。命令发送成功不等于 Renderer 已实际播放画面；真实播放结果必须按手动验收记录。
 
 ## 技术目标
 
@@ -10,11 +10,11 @@ Android 手机投屏技术 Demo。项目按 7 个小 PR 逐步完成一个可演
 |---|---:|---|
 | 投屏延迟 | `< 2 秒` | 未实测 |
 | 视频分辨率 | 优先选择 `1080P` 编码画布 | 实际配置取决于设备 H.264 encoder capabilities；性能未实测 |
-| 视频码率 | 优先配置 `8 Mbps` | 实际配置取决于设备 H.264 encoder capabilities；性能未实测 |
-| 音频码率 | `AAC 128 Kbps` | 未实测 |
-| 平台 | Android Demo | PR 5 已提供可由 PC 解码的 H.264 MPEG-TS 本地流 |
+| 视频码率 | 优先配置 `8 Mbps` | 动态 10.14 秒样本约 `6.65 Mbps`；不代表长期稳定达标 |
+| 音频码率 | `AAC 128 Kbps` | 未实现 |
+| 平台 | Android Demo | PR 6 已验证 Kodi 可显示手机画面，但存在周期性缓冲 / 卡顿 |
 
-目标值不代表已达成结果。PR 5 已在当前真机和 PC 热点环境验证 H.264 MPEG-TS 本地流可抓取、可识别并可实时解码；实际编码画布取决于设备 H.264 encoder capabilities。AAC 音频、DLNA AVTransport 播放控制和延迟 `< 2 秒` 仍未实现或未实测。
+目标值不代表已达成结果。PR 5 已在当前真机和 PC 热点环境验证 H.264 MPEG-TS 本地流可抓取、可识别并可实时解码；PR 6 增加 AVTransport 控制命令发送和错误映射，并在 Kodi 上完成最小链路演示。当前结论限定为“DLNA AVTransport 控制链路可演示”，不代表最终投屏指标已达成。AAC 音频、延迟 `< 2 秒`、真实电视兼容矩阵和 Kodi 卡顿优化仍未完成。
 
 ## 技术架构
 
@@ -32,7 +32,8 @@ flowchart LR
     ENCODER --> NORMALIZER["Annex-B 规范化 + SPS/PPS"]
     NORMALIZER --> MUXER["MPEG-TS 封装"]
     MUXER --> STREAM["本地 HTTP /live.ts"]
-    STREAM -. 后续 PR .-> CONTROL["DLNA 播控"]
+    STREAM --> CONTROL["DLNA AVTransport 控制"]
+    CONTROL --> RENDERER_PLAY["Renderer 尝试播放 /live.ts"]
 ```
 
 ## PR 2 已实现
@@ -75,23 +76,45 @@ flowchart LR
 - 从 `MediaCodec` output buffer 的有效 `offset / size` 区间读取 H.264 access unit，不把无效字节送入流服务。
 - 将 AVC Annex-B / AVCC 输入规范化为 Annex-B；关键帧前补齐最新 SPS / PPS。
 - 使用纯 Kotlin MPEG-TS 封装输出 PAT、PMT、H.264 PES、PTS、PCR、continuity counter 和关键帧 random access 标记。
-- 使用原生 `ServerSocket` 提供 `http://<phone-wifi-ip>:8080/live.ts`，支持多个 PC 客户端和幂等停止释放。
+- 使用原生 `ServerSocket` 提供 `http://<phone-wifi-ip>:8080/live.ts`，支持客户端连接和幂等停止释放。
 - 只从 `wlan*` 接口选择局域网 IPv4。手机未连接 Wi-Fi 时明确启动失败，不把蜂窝私网地址伪装成 PC 可访问地址。
 - 缓存最近关键帧开始的完整 GOP。新客户端连接后先重放该 GOP，再接实时输出，减少中途接入时等待首屏和时间戳跳变。
 - 横竖屏重建 encoder 时清空旧 GOP 缓存，等待新画布重新输出 SPS、PPS 和首个关键帧；HTTP URL 保持不变。
 - 首页展示当前 `/live.ts` 地址、MPEG-TS + H.264 格式，以及 AAC 音频和延迟尚未完成的边界。
 - 停止采集时依次释放 encoder、HTTP 服务、`MediaProjection` 资源；停止后 `/live.ts` 端口关闭。
 
+## PR 6 已实现
+
+- 首页设备卡支持选择 Renderer，并明确展示缺少 AVTransport `controlURL` 的不可控设备。
+- 新增 DLNA 播放控制卡，提供独立按钮：
+  - “发送到 Renderer / 开始播放”：依次执行 `SetAVTransportURI` + `Play`。
+  - “暂停”：只发送 AVTransport `Pause`。
+  - “停止播放”：只发送 AVTransport `Stop`。
+  - “停止采集”：仍只停止本机 `MediaProjection`、Encoder 和 StreamServer，不负责远端 Stop。
+- AVTransport SOAP 使用 `POST` 发送到 `DlnaDevice.avTransportControlUrl`。
+- `SOAPAction` 分别对应 `SetAVTransportURI`、`Play`、`Pause`、`Stop`。
+- 固定 `InstanceID=0`，`Play` 固定 `Speed=1`。
+- `CurrentURIMetaData=""` 作为 PR 6 第一版最小实现。
+- XML 参数会转义，不直接拼接未处理 URL。
+- 网络请求设置连接和读取超时。
+- 协程取消继续抛出，不被普通异常吞掉。
+- HTTP 2xx 且无 SOAP Fault 才算当前步骤成功；HTTP 非 2xx 展示状态码。
+- SOAP Fault 解析 `faultcode`、`faultstring`，并在存在时展示 UPnPError `errorCode` / `errorDescription`。
+- 日志使用 `DlnaControl` tag，记录选择设备、IP、controlURL、streamUrl、阶段、HTTP 状态码、SOAP Fault 摘要和最终结果；普通日志不输出完整 SOAP XML。
+
 ## 本阶段不实现
 
-PR 5 不实现以下能力：
+PR 6 不实现以下能力：
 
 - AAC 音频
-- DLNA AVTransport 播放控制
 - 延迟 `< 2 秒` 实测
+- HLS
+- 多电视兼容矩阵
+- Kodi 周期性缓冲 / 卡顿优化
+- Release APK
 - 乐播云商业 SDK 接入
 
-PR 5 优先选择 `1080P` 编码画布，实际配置取决于设备 H.264 encoder capabilities。`8 Mbps` 是 encoder 配置值，不代表实际持续吞吐量。`AAC 128 Kbps`、延迟 `< 2 秒` 仍为目标指标，当前未实测。
+PR 6 继续使用 PR 5 的 H.264 MPEG-TS `/live.ts` 流服务，不重新实现 MPEG-TS，不修改本地流服务主逻辑。`AAC 128 Kbps`、延迟 `< 2 秒`、不同电视兼容性和卡顿优化仍为目标或后续验证项，当前未完成或未实测。
 
 ## 运行环境
 
@@ -153,7 +176,7 @@ app/build/outputs/apk/debug/app-debug.apk
 ```powershell
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -n com.qierong.dlnascreencastdemo/.MainActivity
-adb logcat -s DLNA-Demo ScreenCapture Encoder StreamServer
+adb logcat -s DLNA-Demo ScreenCapture Encoder StreamServer DlnaControl
 ```
 
 ## 无电视测试：Kodi Renderer 发现
@@ -191,7 +214,7 @@ Look for remote UPnP players
 2. Kodi 是否开启 UPnP / DLNA。
 3. Windows 防火墙是否拦截局域网访问。
 4. 路由器是否开启 AP 隔离。
-5. 当前 PR 已提供手机本地视频流，但 DLNA 播放控制尚未实现。
+5. PR 6 播放控制要求设备提供 AVTransport controlURL；只有设备发现不代表一定可播控。
 
 ## 无电视测试：PC 抓流与播放
 
@@ -216,6 +239,57 @@ ffplay -fflags nobuffer -flags low_delay -framedrop -probesize 32 -analyzedurati
 3. `ffprobe` 能识别 `mpegts` 容器和 `h264` 视频流。
 4. `ffplay` 或 FFmpeg 实时解码能够读取画面。
 5. 停止采集后端口关闭。
+
+## 无电视测试：DLNA AVTransport 播放控制
+
+PR 6 播放控制的前置条件：
+
+1. PR 5 的 `/live.ts` 本地 HTTP 流已能被 `ffprobe` / `ffplay` 验证。
+2. App 首页能展示真实的 `http://<phone-ip>:8080/live.ts`。
+3. 手机和电脑 / Kodi 在同一个 Wi-Fi。
+4. Kodi 已开启 UPnP / DLNA 和远程控制。
+
+测试前必须关闭正在访问 `/live.ts` 的 `ffplay` / `curl`。当前 StreamServer 按一个活跃客户端的演示路径验证；如果 `ffplay` 仍在连接，Kodi / Renderer 访问 `/live.ts` 可能拿到 `503`，容易误判为 DLNA 播控失败。
+
+手动验收顺序：
+
+1. 手机和电脑 / Kodi 连接同一 Wi-Fi。
+2. Kodi 开启 UPnP / DLNA 和远程控制。
+3. App 点击“搜索 DLNA 设备”，确认列表显示 Kodi。
+4. App 点击“开始采集”，同意系统录屏授权，确认首页显示 `/live.ts`。
+5. 确认没有 `ffplay` / `curl` 占用 `/live.ts`。
+6. 在设备卡点击“选择 Renderer”。
+7. 点击“发送到 Renderer / 开始播放”。
+8. 记录 App 状态、`adb logcat -s DlnaControl StreamServer ScreenCapture Encoder`、Kodi 画面表现。
+
+验收结果必须区分三类：
+
+1. `SetAVTransportURI` + `Play` 成功，Kodi 播放出手机画面。
+2. SOAP 控制成功，但 Kodi 未能播放当前实时 TS 流。
+3. SOAP 控制失败，记录 HTTP 状态码、SOAP Fault 或 UPnPError。
+
+Kodi 通常可以作为最小 Renderer 验证。部分真实电视可能要求 DIDL-Lite metadata 或 DLNA contentFeatures；PR 6 使用空 `CurrentURIMetaData`，不做全电视兼容矩阵。如果设备拒绝空 metadata，必须在已知问题中记录，不得写成投屏成功。
+
+### PR 6 真机验收记录
+
+- 测试时间：2026-06-03
+- 手机型号：`23127PN0CC`
+- Android 版本：`16`，API `36`
+- 网络环境：Windows 电脑热点，手机连接热点；手机 Wi-Fi IP 为 `192.168.137.183`
+- 接收端：Windows 端 Kodi，UPnP / DLNA 与远程控制已开启
+- Renderer：`Kodi (SK-20220818ZFPP)`，IP 为 `192.168.137.1`
+- AVTransport controlURL：`http://192.168.137.1:1932/AVTransport/b3eaf005-844b-07e1-086d-e914aaff4b63/control.xml`
+- 本地流地址：`http://192.168.137.183:8080/live.ts`
+- 编码参数：源画面 `1200 x 2670`，实际编码画布 `1080 x 1920`，已配置 `8 Mbps`、`30 fps`、关键帧间隔 `1 秒`、`CBR`
+- `SetAVTransportURI`：成功
+- `Play`：成功
+- Kodi 画面表现：能显示手机画面，说明 AVTransport 控制链路与 `/live.ts` 访问链路可以最小演示
+- 播放质量：存在周期性缓冲 / 卡顿，表现为加载后短时间流畅，随后再次转圈加载
+- 静态样本：`232,368 bytes / 10.13s`，按十进制计算约 `0.18 Mbps`
+- 动态样本：`8,425,596 bytes / 10.14s`，按十进制计算约 `6.65 Mbps`；若按 `10s` 粗估约 `6.74 Mbps`
+- 动态样本 TS 结构：`44,817` 个 `188` 字节 TS 包，余数 `0`，同步头错误包 `0`
+- 样本提交边界：`.ts` 样本、抓包和大体积视频不提交仓库；仓库只保留截图、命令和测试结果摘要
+- 结论：PR 6 可写为“DLNA AVTransport 控制链路可演示”。不能写成最终投屏指标已达成。
 
 ## PR 3 屏幕采集真机测试
 
@@ -309,7 +383,7 @@ PC 从真实 TS 样本解码出的画面：
 
 延迟必须通过可复现方式测量：手机画面显示时间戳，电脑使用 `ffplay` 播放手机流，再使用另一台设备同时拍摄手机和电脑屏幕，根据时间差或视频帧差计算延迟。至少记录 3 次结果和平均值。
 
-PR 5 已提供可由 PC 抓取和解码的 H.264 MPEG-TS 本地流。DLNA 播放控制、AAC 音频和延迟 `< 2 秒` 仍未实现或未实测。
+PR 5 已提供可由 PC 抓取和解码的 H.264 MPEG-TS 本地流。PR 6 已接入 DLNA AVTransport 控制命令，并已验证 Kodi 可以显示手机画面；但播放存在周期性缓冲 / 卡顿。该结果只证明 AVTransport 控制链路可演示，不证明延迟 `< 2 秒`、长期稳定 `8 Mbps`、AAC `128 Kbps` 或真实电视兼容性已经达成。
 
 ## PR 开发顺序
 
@@ -319,8 +393,8 @@ PR 5 已提供可由 PC 抓取和解码的 H.264 MPEG-TS 本地流。DLNA 播放
 | PR 2 | DLNA / UPnP Renderer 发现 | 已合并 |
 | PR 3 | MediaProjection 权限与采集状态 | 已合并 |
 | PR 4 | H.264 编码参数与展示 | 已合并 |
-| PR 5 | 本地 HTTP 流服务与 PC 播放测试 | 当前 PR |
-| PR 6 | DLNA AVTransport 控制 | 未开始 |
+| PR 5 | 本地 HTTP 流服务与 PC 播放测试 | 已合并 |
+| PR 6 | DLNA AVTransport 控制 | 当前 PR |
 | PR 7 | 测试报告、截图、README 收尾、Release APK | 未开始 |
 
 ## 已知问题
@@ -328,18 +402,21 @@ PR 5 已提供可由 PC 抓取和解码的 H.264 MPEG-TS 本地流。DLNA 播放
 - 部分路由器、防火墙或 Renderer 实现可能影响 SSDP 发现。
 - Android 14+ 的整屏 / 单应用选择弹窗样式和单应用选择流程可能受厂商 ROM 影响。
 - MPEG-TS 当前只包含 H.264 视频，不包含 AAC 音频。
-- DLNA AVTransport 播放控制尚未实现，电视或 Kodi 兼容性仍未实测。
+- PR 6 使用空 `CurrentURIMetaData`；部分真实电视可能要求 DIDL-Lite metadata 或 DLNA contentFeatures。
+- SOAP 控制成功不代表 Renderer 已播放出画面；PR 6 已验证 Kodi 可显示手机画面，但不能外推到真实电视兼容矩阵。
+- Kodi 播放 `/live.ts` 存在周期性缓冲 / 卡顿，本 PR 不继续优化。
+- DLNA 播放测试前必须关闭 `ffplay` / `curl`，避免 `/live.ts` 被占用导致 Renderer 请求失败。
 - H.264 编码配置不等于性能实测，延迟 `< 2 秒` 尚未按可复现方法测量。
 - 尚未发布 GitHub Release APK。
 - 系统音频采集受 Android 权限和应用捕获策略限制，后续实现时必须按真实结果记录。
 
 ## 开源参考声明
 
-PR 2 参考 UPnP Device Architecture；PR 3 参考 Android 官方 MediaProjection 和前台服务文档；PR 4 参考 Android 官方 `MediaCodec`、`MediaFormat` 和 `VideoCapabilities` 文档；PR 5 参考 MPEG-TS、PES、PAT / PMT 基础结构和 FFmpeg 验证方式。没有复制第三方项目代码。乐播云仅作为商业兼容方案参考，没有接入其 SDK。
+PR 2 参考 UPnP Device Architecture；PR 3 参考 Android 官方 MediaProjection 和前台服务文档；PR 4 参考 Android 官方 `MediaCodec`、`MediaFormat` 和 `VideoCapabilities` 文档；PR 5 参考 MPEG-TS、PES、PAT / PMT 基础结构和 FFmpeg 验证方式；PR 6 参考 UPnP AVTransport SOAP 控制概念。没有复制第三方项目代码。乐播云仅作为商业兼容方案参考，没有接入其 SDK。
 
 ## 截图与录屏
 
-PR 2 已保存 Kodi Renderer 真机发现截图。PR 3 已保存脱敏屏幕采集截图。PR 4 已保存一张竖屏和一张横屏编码参数脱敏截图，并按同一场景紧凑并排展示。PR 5 已保存 PC 从真实 TS 样本解码出的手机 Demo 页面画面。当前小米 ROM 在采集期间执行 `adb screencap` 会触发系统停止采集，因此未保留无效黑屏截图。
+PR 2 已保存 Kodi Renderer 真机发现截图。PR 3 已保存脱敏屏幕采集截图。PR 4 已保存一张竖屏和一张横屏编码参数脱敏截图，并按同一场景紧凑并排展示。PR 5 已保存 PC 从真实 TS 样本解码出的手机 Demo 页面画面。PR 6 不提交 `.ts` 样本、抓包或大体积视频，只记录命令和测试结果摘要。当前小米 ROM 在采集期间执行 `adb screencap` 会触发系统停止采集，因此未保留无效黑屏截图。
 
 ## Release 下载
 

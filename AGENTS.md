@@ -900,6 +900,7 @@ Release 下载地址
 5. 遇到 Android 权限、DLNA 兼容、音频采集限制时，必须先解释限制，再给可执行替代方案。
 6. 不要为了看起来完成而隐藏失败。
 7. Demo 项目最重要的是：能跑、能演示、能解释、能测试、能下载。
+8. 在当前 Codex 沙箱环境中运行 Gradle 门禁时，如果命令已知会访问 Gradle wrapper 分发包或本机 Gradle 缓存，例如 `testDebugUnitTest`、`lintDebug`、`assembleDebug`，应直接按已知情况申请提权执行，避免先在沙箱内失败一次再重跑，节约时间和不必要的损耗。提权说明必须限定在对应 Gradle 门禁命令，不得扩大到无关命令。
 
 ---
 
