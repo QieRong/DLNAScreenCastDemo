@@ -31,6 +31,22 @@ class MpegTsStreamPipeline(
         waitingForKeyFrame = false
     }
 
+    /**
+     * 将一帧 ADTS 封装的 AAC 音频送入 TS 封装并发布。
+     *
+     * 音频帧与视频帧独立送入，本阶段不做复杂的音视频重排序队列。
+     * 即使音频异常也不会影响视频 pipeline：异常由调用方捕获处理。
+     *
+     * @param data ADTS 头 + raw AAC ES 的完整帧
+     * @param presentationTimeUs 以微秒为单位的 PTS
+     */
+    @Synchronized
+    fun onAudioAccessUnit(data: ByteArray, presentationTimeUs: Long) {
+        if (waitingForKeyFrame) return  // 等待视频关键帧后才开始推送，保持播放端同步
+        val tsPackets = muxer.muxAudioAccessUnit(data, presentationTimeUs)
+        publish(tsPackets, false)
+    }
+
     @Synchronized
     fun reset() {
         normalizer = AvcAnnexBNormalizer()

@@ -9,6 +9,7 @@ import android.util.Log
 import android.view.Surface
 import com.qierong.dlnascreencastdemo.encoder.AndroidAvcEncoderCatalog
 import com.qierong.dlnascreencastdemo.encoder.ActiveEncoderConfig
+import com.qierong.dlnascreencastdemo.encoder.AudioEncoder
 import com.qierong.dlnascreencastdemo.encoder.EncoderConfigSelector
 import com.qierong.dlnascreencastdemo.encoder.VideoEncoder
 import com.qierong.dlnascreencastdemo.stream.LocalStreamServer
@@ -34,6 +35,10 @@ internal class ScreenCaptureManager(
     private val workerHandler = Handler(workerThread.looper)
     private var callbackRegistered = false
     private var videoEncoder: VideoEncoder? = null
+    /** AAC 测试音轨编码器；音频失败不影响视频链路 */
+    private var audioEncoder: AudioEncoder? = null
+    /** 保存当前 pipeline 引用，供 AudioEncoder 回调使用 */
+    private var streamPipeline: MpegTsStreamPipeline? = null
     private var sessionInfo: CaptureSessionInfo? = null
     private var streamUrl: String? = null
     private val resizeDebouncer = LatestValueDebouncer<CaptureConfig>(
@@ -84,8 +89,14 @@ internal class ScreenCaptureManager(
             "未检测到可用于 PC 播放的局域网 IPv4 地址"
         }
         Log.i(STREAM_TAG, "本地流地址：$streamUrl")
-        val initialEncoder = createVideoEncoder(initialConfig)
+        val pipeline = MpegTsStreamPipeline { data, replayOnConnect ->
+            streamServer.publish(data, replayOnConnect)
+        }.also { streamServer.clearReplayChunk() }
+        streamPipeline = pipeline
+        val initialEncoder = createVideoEncoder(initialConfig, pipeline)
         videoEncoder = initialEncoder
+        // 启动 AAC 测试音轨编码器（失败只记录日志，不中断视频链路）
+        startAudioEncoder(pipeline)
         mediaProjection.registerCallback(projectionCallback, workerHandler)
         callbackRegistered = true
         check(
@@ -134,7 +145,7 @@ internal class ScreenCaptureManager(
         }
         onReconfiguring(currentSession, config)
         val replacement = runCatching {
-            createVideoEncoder(targetEncoderConfig)
+            createVideoEncoder(targetEncoderConfig, requireNotNull(streamPipeline))
         }.getOrElse { exception ->
             failAndRelease(exception.message ?: "无法重建 H.264 编码器")
             return
@@ -165,19 +176,47 @@ internal class ScreenCaptureManager(
         onSessionChanged(updatedSession)
     }
 
-    private fun createVideoEncoder(sourceConfig: CaptureConfig): VideoEncoder =
-        createVideoEncoder(selectEncoderConfig(sourceConfig))
+    private fun createVideoEncoder(sourceConfig: CaptureConfig, pipeline: MpegTsStreamPipeline): VideoEncoder =
+        createVideoEncoder(selectEncoderConfig(sourceConfig), pipeline)
 
-    private fun createVideoEncoder(activeConfig: ActiveEncoderConfig): VideoEncoder =
-        VideoEncoder.create(
+    /**
+     * 创建 H.264 视频编码器，将输出接入指定的 [pipeline]。
+     * 重用同一个 pipeline，避免分辨率变化时创建多个流服务实例。
+     */
+    private fun createVideoEncoder(activeConfig: ActiveEncoderConfig, pipeline: MpegTsStreamPipeline): VideoEncoder {
+        pipeline.reset()
+        return VideoEncoder.create(
             activeConfig = activeConfig,
             onError = ::failAndRelease,
-            outputSink = MpegTsStreamPipeline { data, replayOnConnect ->
-                streamServer.publish(data, replayOnConnect)
-            }.also {
-                streamServer.clearReplayChunk()
+            outputSink = pipeline,
+        )
+    }
+
+    /**
+     * 启动 AAC 测试音轨编码器。
+     * 失败时仅记录日志，不中断视频投屏链路。
+     *
+     * @param pipeline 当前流媒体管道，音频帧将通过 [MpegTsStreamPipeline.onAudioAccessUnit] 送入
+     */
+    private fun startAudioEncoder(pipeline: MpegTsStreamPipeline) {
+        val encoder = AudioEncoder(
+            onAudioFrame = { adtsFrame, presentationTimeUs ->
+                // 音频帧到达时封装并发布，异常不向上传播（不影响视频）
+                runCatching {
+                    pipeline.onAudioAccessUnit(adtsFrame, presentationTimeUs)
+                }.onFailure { exception ->
+                    Log.w(AUDIO_TAG, "AAC 帧封装异常（已忽略）：${exception.message}")
+                }
+            },
+            onError = { detail ->
+                // 音频编码失败：记录日志，降级为 video-only，不中断视频投屏
+                Log.e(AUDIO_TAG, "AAC 编码器错误，降级为 video-only：$detail")
+                audioEncoder = null
             },
         )
+        audioEncoder = encoder
+        encoder.start()
+    }
 
     private fun selectEncoderConfig(sourceConfig: CaptureConfig): ActiveEncoderConfig =
         requireNotNull(
@@ -205,6 +244,9 @@ internal class ScreenCaptureManager(
     private fun release(stopProjection: Boolean, notifyReleased: Boolean = true) {
         if (!released.compareAndSet(false, true)) return
         resizeDebouncer.cancel()
+        // 首先停止音频编码器，避免音频帧在流服务实例将要关闭时继续写入
+        audioEncoder?.stop()
+        audioEncoder = null
         val cleanup = CaptureResourceCleanup(
             releaseVirtualDisplay = virtualDisplayLifecycle::release,
             releaseVideoEncoder = {
@@ -232,6 +274,7 @@ internal class ScreenCaptureManager(
     companion object {
         private const val TAG = "ScreenCapture"
         private const val STREAM_TAG = "StreamServer"
+        private const val AUDIO_TAG = "AudioEncoder"
         private const val VIRTUAL_DISPLAY_NAME = "DLNAScreenCastDemo"
         private const val RESIZE_DEBOUNCE_MS = 250L
     }

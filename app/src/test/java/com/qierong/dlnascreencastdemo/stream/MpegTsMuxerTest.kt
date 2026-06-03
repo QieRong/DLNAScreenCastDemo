@@ -21,7 +21,7 @@ class MpegTsMuxerTest {
     }
 
     @Test
-    fun muxVideoAccessUnit_emitsPatAndVideoOnlyPmtBeforeFirstFrame() {
+    fun muxVideoAccessUnit_emitsPatAndAudioVideoPmtBeforeFirstFrame() {
         val packets = MpegTsMuxer().muxVideoAccessUnit(
             annexB = annexBPayload(),
             presentationTimeUs = 0,
@@ -32,12 +32,15 @@ class MpegTsMuxerTest {
         val pmtPid = pat.sectionPid(entryOffset = 10)
         val pmt = packets.single { it.pid() == pmtPid }.psiSection()
 
+        // PMT 表 ID 正确
         assertEquals(PMT_TABLE_ID, pmt[0].unsigned())
+        // 视频 PID 和流类型
         assertEquals(VIDEO_PID, pmt.sectionPid(entryOffset = 8))
-        assertEquals(listOf(H264_STREAM_TYPE), pmt.declaredStreamTypes())
-        assertEquals(VIDEO_PID, pmt.sectionPid(entryOffset = 13))
-        assertFalse(pmt.declaredStreamTypes().contains(AAC_ADTS_STREAM_TYPE))
-        assertFalse(pmt.declaredStreamTypes().contains(AAC_LATM_STREAM_TYPE))
+        // PMT 同时包含视频流（H.264）和音频流（AAC ADTS）
+        val streamTypes = pmt.declaredStreamTypes()
+        assertTrue(streamTypes.contains(H264_STREAM_TYPE))
+        assertTrue(streamTypes.contains(AAC_ADTS_STREAM_TYPE))
+        assertEquals(listOf(H264_STREAM_TYPE, AAC_ADTS_STREAM_TYPE), streamTypes)
     }
 
     @Test
@@ -205,6 +208,7 @@ class MpegTsMuxerTest {
         private const val PAT_PID = 0x0000
         private const val PMT_PID = 0x1000
         private const val VIDEO_PID = 0x0100
+        private const val AUDIO_PID = 0x0101
         private const val PMT_TABLE_ID = 0x02
         private const val H264_STREAM_TYPE = 0x1b
         private const val AAC_ADTS_STREAM_TYPE = 0x0f

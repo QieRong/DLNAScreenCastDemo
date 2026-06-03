@@ -45,8 +45,10 @@ fun buildMetricStatusItems(captureState: CaptureState): List<MetricStatusItem> {
         MetricStatusItem(
             title = "音频",
             target = "AAC 128Kbps",
-            current = "未实现",
-            evidence = "ffprobe 未发现 audio stream",
+            current = "AAC 128Kbps 测试音轨：已接入",
+            evidence = "来源：App 内生成 1kHz 正弦波测试音。" +
+                "未实现：系统内录、麦克风采集。" +
+                "验收方式：ffprobe 识别 audio=aac。",
         ),
     )
 }
