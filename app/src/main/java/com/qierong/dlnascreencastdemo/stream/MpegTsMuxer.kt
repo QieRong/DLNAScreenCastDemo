@@ -30,6 +30,28 @@ class MpegTsMuxer {
         return output.toByteArray()
     }
 
+    /**
+     * 将一帧 ADTS 封装的 AAC 音频数据封装为 MPEG-TS 包。
+     *
+     * @param adtsFrame ADTS 头 + raw AAC ES 的完整帧
+     * @param presentationTimeUs 以微秒为单位的 PTS，将转换为 90kHz 时基
+     * @return 若干个 188 字节的 TS 包组成的字节数组
+     */
+    fun muxAudioAccessUnit(
+        adtsFrame: ByteArray,
+        presentationTimeUs: Long,
+    ): ByteArray {
+        require(adtsFrame.isNotEmpty()) { "ADTS frame must not be empty" }
+        require(presentationTimeUs >= 0) { "Audio presentation time must not be negative" }
+
+        val timestamp90Khz = to90Khz(presentationTimeUs)
+        val output = ByteArrayOutputStream()
+        packetizeAudio(
+            pes = audioPes(adtsFrame, timestamp90Khz),
+        ).forEach(output::write)
+        return output.toByteArray()
+    }
+
     private fun psiPacket(pid: Int, section: ByteArray): ByteArray {
         require(section.size + PSI_POINTER_FIELD_SIZE <= TS_PAYLOAD_SIZE)
         val packet = ByteArray(TS_PACKET_SIZE) { STUFFING_BYTE }
@@ -84,6 +106,34 @@ class MpegTsMuxer {
         return packets
     }
 
+    /**
+     * 将 PES 数据拆分为 188 字节的 TS 包（音频，无 PCR）。
+     * 音频包使用仅载荷模式（无 adaptation field），简化封装。
+     */
+    private fun packetizeAudio(pes: ByteArray): List<ByteArray> {
+        val packets = mutableListOf<ByteArray>()
+        var offset = 0
+        var firstPacket = true
+        while (offset < pes.size) {
+            val payloadSize = minOf(
+                pes.size - offset,
+                TS_PACKET_SIZE - TS_HEADER_SIZE,
+            )
+            val packet = ByteArray(TS_PACKET_SIZE) { STUFFING_BYTE }
+            writeHeader(
+                packet = packet,
+                pid = AUDIO_PID,
+                payloadUnitStart = firstPacket,
+                hasAdaptationField = false,
+            )
+            pes.copyInto(packet, TS_HEADER_SIZE, offset, offset + payloadSize)
+            offset += payloadSize
+            firstPacket = false
+            packets += packet
+        }
+        return packets
+    }
+
     private fun writeHeader(
         packet: ByteArray,
         pid: Int,
@@ -121,6 +171,31 @@ class MpegTsMuxer {
             PTS_SIZE.toByte(),
         ) + encodePts(timestamp90Khz) + annexB
 
+    /**
+     * 构建音频 PES 包头（stream_id=0xC0，包含 PTS）。
+     * PES_packet_length 设置为实际数据长度（PES header after length field + payload）。
+     *
+     * @param adtsFrame ADTS 封装的 AAC 音频帧
+     * @param timestamp90Khz 90kHz 时基 PTS
+     */
+    private fun audioPes(adtsFrame: ByteArray, timestamp90Khz: Long): ByteArray {
+        // PES 包头（从 marker bits 起）= 3 字节（marker + flags + header_data_length）+ PTS_SIZE(5)
+        val pesHeaderAfterLength = PES_HEADER_AFTER_PACKET_LENGTH_SIZE
+        val pesPacketLength = pesHeaderAfterLength + adtsFrame.size
+        return byteArrayOf(
+            0,
+            0,
+            1,
+            AUDIO_STREAM_ID,
+            // PES_packet_length（16 bit big-endian）
+            ((pesPacketLength shr 8) and 0xFF).toByte(),
+            (pesPacketLength and 0xFF).toByte(),
+            PES_MARKER_BITS,
+            PTS_ONLY_FLAG,
+            PTS_SIZE.toByte(),
+        ) + encodePts(timestamp90Khz) + adtsFrame
+    }
+
     private fun patSection(): ByteArray =
         withCrc(
             byteArrayOf(
@@ -144,6 +219,7 @@ class MpegTsMuxer {
             byteArrayOf(
                 PMT_TABLE_ID,
                 SECTION_SYNTAX_HIGH_BITS,
+                // section_length = 23 = 0x17：14（原视频 body）+ 5（音频 ES info）+ 4（CRC）
                 PMT_SECTION_LENGTH,
                 0,
                 PROGRAM_NUMBER,
@@ -154,9 +230,16 @@ class MpegTsMuxer {
                 VIDEO_PID.toByte(),
                 NO_DESCRIPTORS_HIGH_BITS,
                 0,
+                // 视频流 ES info：H.264
                 H264_STREAM_TYPE,
                 pidHigh(VIDEO_PID),
                 VIDEO_PID.toByte(),
+                NO_DESCRIPTORS_HIGH_BITS,
+                0,
+                // 音频流 ES info：AAC（stream_type=0x0f，ADTS 封装）
+                AAC_STREAM_TYPE,
+                pidHigh(AUDIO_PID),
+                AUDIO_PID.toByte(),
                 NO_DESCRIPTORS_HIGH_BITS,
                 0,
             ),
@@ -227,17 +310,33 @@ class MpegTsMuxer {
         private const val PCR_ADAPTATION_LENGTH = 7
         private const val PCR_OFFSET = TS_HEADER_SIZE + ADAPTATION_LENGTH_SIZE + FLAGS_ONLY_ADAPTATION_LENGTH
         private const val PTS_SIZE = 5
+        /**
+         * PES 包头中 packet_length 字段之后的固定长度：
+         * marker_bits(1) + PTS_DTS_flags(1) + header_data_length(1) + PTS(5) = 8 字节。
+         */
+        private const val PES_HEADER_AFTER_PACKET_LENGTH_SIZE = 8
 
         private const val PAT_PID = 0x0000
         private const val PMT_PID = 0x1000
         private const val VIDEO_PID = 0x0100
+        /** 音频流 PID */
+        private const val AUDIO_PID = 0x0101
 
         private const val PAT_TABLE_ID: Byte = 0x00
         private const val PMT_TABLE_ID: Byte = 0x02
         private const val H264_STREAM_TYPE: Byte = 0x1b
+        /** AAC with ADTS framing（MPEG-2 Part 7 / ISO 13818-7 ADTS） */
+        private const val AAC_STREAM_TYPE: Byte = 0x0f
         private const val VIDEO_STREAM_ID: Byte = 0xe0.toByte()
+        /** 音频 PES stream_id：0xC0 = 第一个 MPEG audio stream */
+        private const val AUDIO_STREAM_ID: Byte = 0xC0.toByte()
         private const val PAT_SECTION_LENGTH: Byte = 0x0d
-        private const val PMT_SECTION_LENGTH: Byte = 0x12
+        /**
+         * PMT section_length = 23 = 0x17。
+         * 原值 0x12(18)：4 字节 PCR PID + program info len + video ES(5) + CRC(4) = 14 body + 4 CRC = 18。
+         * 新增音频 ES(5) → body = 19，加 CRC = 23 = 0x17。
+         */
+        private const val PMT_SECTION_LENGTH: Byte = 0x17
         private const val TRANSPORT_STREAM_ID: Byte = 0x01
         private const val PROGRAM_NUMBER: Byte = 0x01
 
