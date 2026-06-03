@@ -14,7 +14,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -26,6 +29,9 @@ import com.qierong.dlnascreencastdemo.feature.device.DeviceListViewModel
 import com.qierong.dlnascreencastdemo.feature.device.DeviceListViewModelFactory
 import com.qierong.dlnascreencastdemo.feature.home.HomeScreen
 import com.qierong.dlnascreencastdemo.feature.home.HomeUiState
+import com.qierong.dlnascreencastdemo.feature.metrics.DynamicBitrateTestScreen
+import com.qierong.dlnascreencastdemo.feature.metrics.LatencyTestScreen
+import com.qierong.dlnascreencastdemo.feature.metrics.MetricsDemoPage
 import com.qierong.dlnascreencastdemo.ui.theme.DLNAScreenCastDemoTheme
 
 class MainActivity : ComponentActivity() {
@@ -42,6 +48,9 @@ class MainActivity : ComponentActivity() {
                 val captureState by captureViewModel.uiState.collectAsStateWithLifecycle()
                 val dlnaControlViewModel: DlnaControlViewModel = viewModel()
                 val dlnaControlState by dlnaControlViewModel.uiState.collectAsStateWithLifecycle()
+                var metricsDemoPage by rememberSaveable {
+                    mutableStateOf<MetricsDemoPage?>(null)
+                }
                 val projectionManager = remember {
                     getSystemService(MediaProjectionManager::class.java)
                 }
@@ -90,54 +99,70 @@ class MainActivity : ComponentActivity() {
                     capturePermissionCoordinator.onNotificationPermissionResult(isGranted)
                 }
 
-                HomeScreen(
-                    state = HomeUiState(),
-                    deviceState = deviceState,
-                    captureState = captureState,
-                    dlnaControlState = dlnaControlState,
-                    onSearchDevices = {
-                        val needsNearbyWifiPermission =
-                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                                ContextCompat.checkSelfPermission(
-                                    this@MainActivity,
-                                    Manifest.permission.NEARBY_WIFI_DEVICES,
-                                ) != PackageManager.PERMISSION_GRANTED
-                        if (needsNearbyWifiPermission) {
-                            nearbyWifiPermissionLauncher.launch(
-                                Manifest.permission.NEARBY_WIFI_DEVICES,
-                            )
-                        } else {
-                            deviceListViewModel.searchDevices()
-                        }
-                    },
-                    onStartCapture = {
-                        if (captureViewModel.requestCapturePermission()) {
-                            val needsNotificationPermission =
+                when (metricsDemoPage) {
+                    null -> HomeScreen(
+                        state = HomeUiState(),
+                        deviceState = deviceState,
+                        captureState = captureState,
+                        dlnaControlState = dlnaControlState,
+                        onOpenLatencyTest = {
+                            metricsDemoPage = MetricsDemoPage.Latency
+                        },
+                        onOpenDynamicBitrateTest = {
+                            metricsDemoPage = MetricsDemoPage.DynamicBitrate
+                        },
+                        onSearchDevices = {
+                            val needsNearbyWifiPermission =
                                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                                     ContextCompat.checkSelfPermission(
                                         this@MainActivity,
-                                        Manifest.permission.POST_NOTIFICATIONS,
+                                        Manifest.permission.NEARBY_WIFI_DEVICES,
                                     ) != PackageManager.PERMISSION_GRANTED
-                            capturePermissionCoordinator.start(
-                                needsNotificationPermission = needsNotificationPermission,
-                                requestNotificationPermission = {
-                                    notificationPermissionLauncher.launch(
-                                        Manifest.permission.POST_NOTIFICATIONS,
-                                    )
-                                },
-                            )
-                        }
-                    },
-                    onStopCapture = {
-                        ScreenCaptureService.stop(applicationContext)
-                    },
-                    onSelectRenderer = dlnaControlViewModel::selectDevice,
-                    onSendToRenderer = {
-                        dlnaControlViewModel.sendToRenderer(captureState)
-                    },
-                    onPauseRenderer = dlnaControlViewModel::pause,
-                    onStopRenderer = dlnaControlViewModel::stopRemotePlayback,
-                )
+                            if (needsNearbyWifiPermission) {
+                                nearbyWifiPermissionLauncher.launch(
+                                    Manifest.permission.NEARBY_WIFI_DEVICES,
+                                )
+                            } else {
+                                deviceListViewModel.searchDevices()
+                            }
+                        },
+                        onStartCapture = {
+                            if (captureViewModel.requestCapturePermission()) {
+                                val needsNotificationPermission =
+                                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                        ContextCompat.checkSelfPermission(
+                                            this@MainActivity,
+                                            Manifest.permission.POST_NOTIFICATIONS,
+                                        ) != PackageManager.PERMISSION_GRANTED
+                                capturePermissionCoordinator.start(
+                                    needsNotificationPermission = needsNotificationPermission,
+                                    requestNotificationPermission = {
+                                        notificationPermissionLauncher.launch(
+                                            Manifest.permission.POST_NOTIFICATIONS,
+                                        )
+                                    },
+                                )
+                            }
+                        },
+                        onStopCapture = {
+                            ScreenCaptureService.stop(applicationContext)
+                        },
+                        onSelectRenderer = dlnaControlViewModel::selectDevice,
+                        onSendToRenderer = {
+                            dlnaControlViewModel.sendToRenderer(captureState)
+                        },
+                        onPauseRenderer = dlnaControlViewModel::pause,
+                        onStopRenderer = dlnaControlViewModel::stopRemotePlayback,
+                    )
+
+                    MetricsDemoPage.Latency -> LatencyTestScreen(
+                        onBack = { metricsDemoPage = null },
+                    )
+
+                    MetricsDemoPage.DynamicBitrate -> DynamicBitrateTestScreen(
+                        onBack = { metricsDemoPage = null },
+                    )
+                }
             }
         }
     }
