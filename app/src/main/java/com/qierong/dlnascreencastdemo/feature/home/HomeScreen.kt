@@ -27,6 +27,8 @@ import com.qierong.dlnascreencastdemo.feature.casting.DlnaControlStatus
 import com.qierong.dlnascreencastdemo.feature.casting.DlnaControlUiState
 import com.qierong.dlnascreencastdemo.feature.device.DeviceDiscoveryStatus
 import com.qierong.dlnascreencastdemo.feature.device.DeviceListUiState
+import com.qierong.dlnascreencastdemo.feature.metrics.MetricsStatusCard
+import com.qierong.dlnascreencastdemo.feature.metrics.buildMetricStatusItems
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -35,6 +37,8 @@ fun HomeScreen(
     deviceState: DeviceListUiState,
     captureState: CaptureState,
     dlnaControlState: DlnaControlUiState,
+    onOpenLatencyTest: () -> Unit,
+    onOpenDynamicBitrateTest: () -> Unit,
     onSearchDevices: () -> Unit,
     onStartCapture: () -> Unit,
     onStopCapture: () -> Unit,
@@ -55,6 +59,8 @@ fun HomeScreen(
             deviceState = deviceState,
             captureState = captureState,
             dlnaControlState = dlnaControlState,
+            onOpenLatencyTest = onOpenLatencyTest,
+            onOpenDynamicBitrateTest = onOpenDynamicBitrateTest,
             onSearchDevices = onSearchDevices,
             onStartCapture = onStartCapture,
             onStopCapture = onStopCapture,
@@ -72,6 +78,8 @@ private fun HomeContent(
     deviceState: DeviceListUiState,
     captureState: CaptureState,
     dlnaControlState: DlnaControlUiState,
+    onOpenLatencyTest: () -> Unit,
+    onOpenDynamicBitrateTest: () -> Unit,
     onSearchDevices: () -> Unit,
     onStartCapture: () -> Unit,
     onStopCapture: () -> Unit,
@@ -100,6 +108,38 @@ private fun HomeContent(
         }
         item {
             StatusCard(title = "性能指标", detail = state.metricsNotice)
+        }
+        item {
+            MetricsStatusCard(items = buildMetricStatusItems(captureState))
+        }
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "指标演示 / 验收辅助",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        text = "页面只用于辅助录像和动态样本测试，不代表指标自动达成。",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Button(
+                        onClick = onOpenLatencyTest,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(text = "打开延迟测试页")
+                    }
+                    Button(
+                        onClick = onOpenDynamicBitrateTest,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(text = "打开动态码率测试页")
+                    }
+                }
+            }
         }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -215,7 +255,7 @@ private fun DiscoveryStatusCard(
     modifier: Modifier = Modifier,
 ) {
     val detail = when (status) {
-        DeviceDiscoveryStatus.Idle -> "尚未搜索。当前 PR 可对可控 Renderer 发送 AVTransport 播放控制。"
+        DeviceDiscoveryStatus.Idle -> "尚未搜索。已接入可控 Renderer 的 AVTransport 播放控制。"
         DeviceDiscoveryStatus.Searching -> "正在通过 SSDP 搜索局域网 Renderer，请稍候。"
         DeviceDiscoveryStatus.Empty -> "未发现 Renderer，请查看下方排查说明。"
         is DeviceDiscoveryStatus.Success -> "已发现 ${status.count} 个 Renderer。"

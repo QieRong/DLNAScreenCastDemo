@@ -9,7 +9,8 @@ class HomeUiStateTest {
     fun initialHomeState_marksDlnaControlPhaseAndMetricsBoundary() {
         val state = HomeUiState()
 
-        assertEquals("PR 6 / 7：DLNA AVTransport 播放控制", state.currentPhase)
+        assertEquals("PR 8：指标演示与动态测试页", state.currentPhase)
+        assertTrue(state.metricsNotice.contains("可复现测试入口"))
         assertTrue(state.metricsNotice.contains("AAC 音频未实现"))
         assertTrue(state.metricsNotice.contains("延迟仍未实测"))
     }

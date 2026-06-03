@@ -1,10 +1,11 @@
 # DLNAScreenCastDemo
 
-Android 手机投屏技术 Demo。项目按 7 个小 PR 逐步完成一个可演示、可测试、可下载 APK 的原型。
+Android 手机投屏技术 Demo。项目按小 PR 逐步完成一个可演示、可测试、可下载 APK 的原型。
 
-当前仓库开发到 **PR 7：最终指标验证、测试报告与 Release 准备**。本项目已完成一个 Android DLNA 投屏 Demo 的可演示链路：小米 14 采集屏幕并编码为 H.264，通过本地 HTTP `live.ts` 输出，再由 App 使用 DLNA AVTransport 控制 Kodi 播放该流。Kodi 能显示手机画面，但当前仍存在周期性缓冲 / 卡顿；AAC 音频、真实电视兼容和严格 `< 2 秒` 延迟仍需后续优化。
+当前仓库已完成 **PR 7 / v1.0.0-demo** 的最终测试报告与 Release，PR8 只新增指标演示辅助页面和测试文档。本项目已完成一个 Android DLNA 投屏 Demo 的可演示链路：小米 14 采集屏幕并编码为 H.264，通过本地 HTTP `live.ts` 输出，再由 App 使用 DLNA AVTransport 控制 Kodi 播放该流。Kodi 能显示手机画面，但当前仍存在周期性缓冲 / 卡顿；AAC 音频、真实电视兼容和严格 `< 2 秒` 延迟仍需后续优化。
 
 最终测试报告：[docs/FINAL_TEST_REPORT.md](docs/FINAL_TEST_REPORT.md)。
+指标演示与动态测试指南：[docs/METRICS_DEMO_TEST_GUIDE.md](docs/METRICS_DEMO_TEST_GUIDE.md)。
 
 ## 技术目标
 
@@ -15,7 +16,7 @@ Android 手机投屏技术 Demo。项目按 7 个小 PR 逐步完成一个可演
 | 视频分辨率 | `1080P` | App 参数 + ffprobe | PR7 ADB forward 样本识别为 `1080 x 1920`；当前小米 14 竖屏样本达到 1080P 目标画布 | 达成 |
 | 视频码率 | `8 Mbps` | MediaCodec 配置 + 样本估算 | 目标配置 `8 Mbps`；PR7 静态样本按 10 秒估算约 `0.29 Mbps`，按 ffprobe `bit_rate` 约 `0.030 Mbps` | 部分达成 |
 | 音频规格 | `AAC 128 Kbps` | ffprobe 音频流检查 | 当前实现为 video-only，PR7 ffprobe 未发现 audio stream，AAC 未实现 | 未实现 |
-| 平台 | Android Demo | 小米 14 真机 APK | 可安装运行，Release APK 待 PR7 合并后发布 | 达成 |
+| 平台 | Android Demo | 小米 14 真机 APK | 可安装运行；Release APK 已发布：[v1.0.0-demo](https://github.com/QieRong/DLNAScreenCastDemo/releases/tag/v1.0.0-demo) | 达成 |
 
 目标值不代表已达成结果。PR 5 已在当前真机和 PC 热点环境验证 H.264 MPEG-TS 本地流可抓取、可识别并可实时解码；PR 6 增加 AVTransport 控制命令发送和错误映射，并在 Kodi 上完成最小链路演示。PR 7 新增 ADB forward + `curl` + `ffprobe` 证据，证明 App 本机 HTTP 服务和 `/live.ts` 内容可读；该证据不等同于 Windows 局域网直连成功，也不等同于真实电视端可访问。AAC 音频、延迟 `< 2 秒`、真实电视兼容矩阵和 Kodi 卡顿优化仍未完成。
 
@@ -111,8 +112,8 @@ flowchart LR
 - 新增 Release 文案草稿：[docs/RELEASE_NOTES_v1.0.0-demo.md](docs/RELEASE_NOTES_v1.0.0-demo.md)。
 - 技术指标表增加“状态”列，区分达成、部分达成、接近、未实现和未实测。
 - 证据分层记录：PR6 证明 Kodi 曾通过 DLNA AVTransport 显示手机画面但有周期性缓冲；PR7 证明 ADB forward 下 `/live.ts` 为 MPEG-TS / H.264 / `1080 x 1920`；PR7 同时记录 Windows 直连 `192.168.137.44:8080` 超时。
-- Release APK 不提交仓库；PR7 只准备构建命令、资产文件名和 SHA256 记录方式。
-- 真正的 `v1.0.0-demo` tag 和 GitHub Release 等 PR7 合并到 `main` 后再创建，确保 tag 指向最终 `main`。
+- Release APK 不提交仓库；已通过 GitHub Release 发布，仓库内保留构建命令、资产文件名和 SHA256 记录方式。
+- `v1.0.0-demo` tag 和 GitHub Release 已创建，Release 链接见下方“Release 下载”。
 
 ### PR 7 证据矩阵
 
@@ -141,6 +142,22 @@ PR 7 不实现以下能力：
 - 乐播云商业 SDK 接入
 
 PR 7 不改投屏核心链路，只验证并整理证据。`AAC 128 Kbps`、不同电视兼容性和卡顿优化仍为后续独立工作；严格 `<2 秒` 延迟测试未完成，缺少外部录像和三次读数，不能写达标。
+
+## PR 8 指标演示与动态测试页
+
+PR8 的目标是提供“可复现测试入口”，不是宣称指标达成；所有未实测、未实现、部分达成状态必须保持。
+
+PR8 只新增 App 内指标演示辅助页面和测试文档，不修改 PR7 / `v1.0.0-demo` 的历史测试结论，不移动已发布 tag，不覆盖已发布 APK 说明。若后续需要发布新版本，建议使用 `v1.1.0-metrics-demo`，不要重新改 `v1.0.0-demo`。
+
+新增能力：
+
+- 首页新增“指标演示 / 验收辅助”入口。
+- 新增延迟测试页：毫秒时间戳、秒表格式、Frame 编号、快速变化色块和跳变进度。
+- 新增动态码率测试页：高速滚动文字、移动棋盘格、250ms 闪动色块、多个移动方块、毫秒时间戳和测试时长。
+- 进入延迟测试页或动态码率测试页时保持屏幕常亮，退出页面后恢复默认。
+- 首页四项指标按“目标 / 当前 / 证据”展示，避免把目标写成已达成。
+
+本阶段不实现 AAC，不重构 DLNA 核心链路，不修改 MediaProjection / MediaCodec / MPEG-TS / StreamServer / AVTransport 核心实现，不接入乐播或其他商业 SDK。
 
 ## 运行环境
 
@@ -413,6 +430,50 @@ PR 5 已提供可由 PC 抓取和解码的 H.264 MPEG-TS 本地流。PR 6 已接
 
 PR 7 复测通过 ADB forward 抓取当前 App 本机 `8080` 服务：`curl http://127.0.0.1:18080/live.ts --max-time 10` 收到 `HTTP/1.1 200 OK` 和 `Content-Type: video/mp2t`，样本 `357,388 bytes`。`ffprobe` 识别 `format_name=mpegts`、`codec_name=h264`、`width=1080`、`height=1920`，未发现 audio stream。该证据只证明 App 本机 HTTP 服务和 `live.ts` 内容可读；Windows 直连 `http://192.168.137.44:8080/live.ts` 仍超时，不能写成局域网直连或真实电视端访问已通过。
 
+### 如何演示四项指标
+
+PR8 新增 App 内“指标演示 / 验收辅助”入口。页面用于辅助录像和动态样本测试，不代表指标自动达成。
+
+四项指标展示固定区分“目标 / 当前 / 证据”：
+
+```text
+延迟
+目标：< 2 秒
+当前：未实测
+证据：缺少 3 次外部录像读数
+
+分辨率
+目标：1080P
+当前：开始采集后显示当前编码尺寸，例如 1080 x 1920
+证据：来自当前 CaptureState；后续可用 ffprobe 样本复核
+
+视频码率
+目标：8 Mbps
+当前：动态样本待测
+证据：需 30 秒动态页面 curl 样本
+
+音频
+目标：AAC 128Kbps
+当前：未实现
+证据：ffprobe 未发现 audio stream
+```
+
+延迟测试建议：
+
+1. 打开 App 首页的“延迟测试页”。
+2. 开始采集并让电脑端播放 `/live.ts`。
+3. 使用 vivo X80 同时拍摄小米 14 原始屏幕和电脑播放画面。
+4. 暂停录像读取 3 次时间差并计算平均值。
+
+动态码率测试建议：
+
+1. 打开 App 首页的“动态码率测试页”。
+2. 开始采集并使用 `curl --max-time 30` 抓取 30 秒动态样本。
+3. 优先按 `curl` 墙钟时间估算码率：`文件字节数 x 8 / 实际秒数 / 1,000,000`。
+4. 使用 `ffprobe` 辅助查看 `mpegts`、`h264`、分辨率和是否存在 audio stream。
+
+完整命令和记录模板见：[docs/METRICS_DEMO_TEST_GUIDE.md](docs/METRICS_DEMO_TEST_GUIDE.md)。
+
 ## PR 开发顺序
 
 | PR | 内容 | 状态 |
@@ -423,7 +484,8 @@ PR 7 复测通过 ADB forward 抓取当前 App 本机 `8080` 服务：`curl http
 | PR 4 | H.264 编码参数与展示 | 已合并 |
 | PR 5 | 本地 HTTP 流服务与 PC 播放测试 | 已合并 |
 | PR 6 | DLNA AVTransport 控制 | 已合并 |
-| PR 7 | 最终指标验证、测试报告、README 收尾、Release 准备 | 当前 PR |
+| PR 7 | 最终指标验证、测试报告、README 收尾、Release 准备 | 已合并 |
+| PR 8 | 指标演示辅助页面与动态测试指南 | 当前 PR |
 
 ## 已知问题
 
@@ -437,7 +499,7 @@ PR 7 复测通过 ADB forward 抓取当前 App 本机 `8080` 服务：`curl http
 - DLNA 播放测试前必须关闭 `ffplay` / `curl`，避免 `/live.ts` 被占用导致 Renderer 请求失败。
 - H.264 编码配置不等于性能实测；PR7 静态样本估算码率远低于 `8 Mbps`，需要动态画面和更长时长复测。
 - 严格 `<2 秒` 延迟尚未按可复现方法测量，缺少外部录像和三次读数。
-- 尚未发布 GitHub Release APK。
+- GitHub Release APK 已发布：[v1.0.0-demo](https://github.com/QieRong/DLNAScreenCastDemo/releases/tag/v1.0.0-demo)。
 - 系统音频采集受 Android 权限和应用捕获策略限制，后续实现时必须按真实结果记录。
 
 ## 开源参考声明
@@ -476,14 +538,17 @@ PR7 复测已记录 `SetAVTransportURI`、`Play`、`Pause`、`Stop` 均返回 `H
 
 仓库地址：[QieRong/DLNAScreenCastDemo](https://github.com/QieRong/DLNAScreenCastDemo)
 
-Release APK 尚未发布；PR7 分支只准备 Release 文案和 APK 校验信息。真正的 tag 与 GitHub Release 等 PR7 合并到 `main` 后创建。
+Release APK 已发布：
+
+- Release 页面：[v1.0.0-demo](https://github.com/QieRong/DLNAScreenCastDemo/releases/tag/v1.0.0-demo)
+- APK 下载：[DLNAScreenCastDemo-v1.0.0-demo.apk](https://github.com/QieRong/DLNAScreenCastDemo/releases/download/v1.0.0-demo/DLNAScreenCastDemo-v1.0.0-demo.apk)
 
 ```text
 APK 文件名：DLNAScreenCastDemo-v1.0.0-demo.apk
 构建类型：Debug Demo APK
 构建命令：.\gradlew.bat assembleDebug --console=plain
-对应 commit：PR7 合并后的 main commit
-SHA256：PR7 合并后重新构建并计算
+对应 tag：v1.0.0-demo
+SHA256：见 GitHub Release 资产说明
 已知问题：Kodi 周期性缓冲、Windows 直连本次超时、AAC 未实现、严格延迟未实测、真实电视兼容未覆盖
 未实现项：AAC 128 Kbps、HLS、DIDL-Lite metadata / DLNA contentFeatures 兼容增强、多电视兼容矩阵
 ```
