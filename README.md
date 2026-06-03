@@ -2,19 +2,22 @@
 
 Android 手机投屏技术 Demo。项目按 7 个小 PR 逐步完成一个可演示、可测试、可下载 APK 的原型。
 
-当前仓库开发到 **PR 6：DLNA AVTransport 播放控制**。本阶段在 PR 5 已验证的 `/live.ts` 本地 HTTP 流基础上，增加 Renderer 选择、`SetAVTransportURI`、`Play`、`Pause`、`Stop`、分阶段错误展示和 `DlnaControl` 日志。命令发送成功不等于 Renderer 已实际播放画面；真实播放结果必须按手动验收记录。
+当前仓库开发到 **PR 7：最终指标验证、测试报告与 Release 准备**。本项目已完成一个 Android DLNA 投屏 Demo 的可演示链路：小米 14 采集屏幕并编码为 H.264，通过本地 HTTP `live.ts` 输出，再由 App 使用 DLNA AVTransport 控制 Kodi 播放该流。Kodi 能显示手机画面，但当前仍存在周期性缓冲 / 卡顿；AAC 音频、真实电视兼容和严格 `< 2 秒` 延迟仍需后续优化。
+
+最终测试报告：[docs/FINAL_TEST_REPORT.md](docs/FINAL_TEST_REPORT.md)。
 
 ## 技术目标
 
-| 指标 | 目标值 | 当前结果 |
-|---|---:|---|
-| 投屏延迟 | `< 2 秒` | 未实测 |
-| 视频分辨率 | 优先选择 `1080P` 编码画布 | 实际配置取决于设备 H.264 encoder capabilities；性能未实测 |
-| 视频码率 | 优先配置 `8 Mbps` | 动态 10.14 秒样本约 `6.65 Mbps`；不代表长期稳定达标 |
-| 音频码率 | `AAC 128 Kbps` | 未实现 |
-| 平台 | Android Demo | PR 6 已验证 Kodi 可显示手机画面，但存在周期性缓冲 / 卡顿 |
+| 指标 | 目标值 | 当前验证方式 | 当前结果 | 状态 |
+|---|---:|---|---|---|
+| DLNA 投屏 | 支持 DLNA Renderer | Kodi + AVTransport `SetAVTransportURI` / `Play` | Kodi 可显示手机画面，但存在周期性缓冲 / 卡顿 | 部分达成 |
+| 投屏延迟 | `< 2 秒` | 秒表 / 外部摄像机对比 | 未完成严格延迟测试，原因：当前没有外部摄像机录像 / 三次时间差读数 | 未实测 |
+| 视频分辨率 | `1080P` | App 参数 + ffprobe | PR7 ADB forward 样本识别为 `1080 x 1920`；当前小米 14 竖屏样本达到 1080P 目标画布 | 达成 |
+| 视频码率 | `8 Mbps` | MediaCodec 配置 + 样本估算 | 目标配置 `8 Mbps`；PR7 静态样本按 10 秒估算约 `0.29 Mbps`，按 ffprobe `bit_rate` 约 `0.030 Mbps` | 部分达成 |
+| 音频规格 | `AAC 128 Kbps` | ffprobe 音频流检查 | 当前实现为 video-only，PR7 ffprobe 未发现 audio stream，AAC 未实现 | 未实现 |
+| 平台 | Android Demo | 小米 14 真机 APK | 可安装运行，Release APK 待 PR7 合并后发布 | 达成 |
 
-目标值不代表已达成结果。PR 5 已在当前真机和 PC 热点环境验证 H.264 MPEG-TS 本地流可抓取、可识别并可实时解码；PR 6 增加 AVTransport 控制命令发送和错误映射，并在 Kodi 上完成最小链路演示。当前结论限定为“DLNA AVTransport 控制链路可演示”，不代表最终投屏指标已达成。AAC 音频、延迟 `< 2 秒`、真实电视兼容矩阵和 Kodi 卡顿优化仍未完成。
+目标值不代表已达成结果。PR 5 已在当前真机和 PC 热点环境验证 H.264 MPEG-TS 本地流可抓取、可识别并可实时解码；PR 6 增加 AVTransport 控制命令发送和错误映射，并在 Kodi 上完成最小链路演示。PR 7 新增 ADB forward + `curl` + `ffprobe` 证据，证明 App 本机 HTTP 服务和 `/live.ts` 内容可读；该证据不等同于 Windows 局域网直连成功，也不等同于真实电视端可访问。AAC 音频、延迟 `< 2 秒`、真实电视兼容矩阵和 Kodi 卡顿优化仍未完成。
 
 ## 技术架构
 
@@ -102,19 +105,42 @@ flowchart LR
 - SOAP Fault 解析 `faultcode`、`faultstring`，并在存在时展示 UPnPError `errorCode` / `errorDescription`。
 - 日志使用 `DlnaControl` tag，记录选择设备、IP、controlURL、streamUrl、阶段、HTTP 状态码、SOAP Fault 摘要和最终结果；普通日志不输出完整 SOAP XML。
 
+## PR 7 交付准备
+
+- 新增最终测试报告：[docs/FINAL_TEST_REPORT.md](docs/FINAL_TEST_REPORT.md)。
+- 新增 Release 文案草稿：[docs/RELEASE_NOTES_v1.0.0-demo.md](docs/RELEASE_NOTES_v1.0.0-demo.md)。
+- 技术指标表增加“状态”列，区分达成、部分达成、接近、未实现和未实测。
+- 证据分层记录：PR6 证明 Kodi 曾通过 DLNA AVTransport 显示手机画面但有周期性缓冲；PR7 证明 ADB forward 下 `/live.ts` 为 MPEG-TS / H.264 / `1080 x 1920`；PR7 同时记录 Windows 直连 `192.168.137.44:8080` 超时。
+- Release APK 不提交仓库；PR7 只准备构建命令、资产文件名和 SHA256 记录方式。
+- 真正的 `v1.0.0-demo` tag 和 GitHub Release 等 PR7 合并到 `main` 后再创建，确保 tag 指向最终 `main`。
+
+### PR 7 证据矩阵
+
+| 验收项 | 状态 | 证据 / 边界 |
+|---|---|---|
+| App 构建与单测 | PASS | `testDebugUnitTest lintDebug assembleDebug` 成功 |
+| App 本机 HTTP 服务 | PASS | 手机 `*:8080` 监听，ADB forward 收到 `HTTP 200` |
+| TS / H.264 内容 | PASS | `ffprobe` 识别 `mpegts` + `h264` |
+| 小米 14 竖屏样本 1080P 画布 | PASS | PR7 样本为 `1080 x 1920`；不外推到所有场景 |
+| Windows 局域网直连手机 `8080` | FAIL | `curl` / `Test-NetConnection` 访问 `192.168.137.44:8080` 超时 |
+| Kodi DLNA 播放链路 | 部分通过 | PR6 可显示手机画面，但存在周期性缓冲 / 卡顿 |
+| 8 Mbps 稳定码率 | 部分通过 | 编码器配置 `8 Mbps`，PR7 静态样本估算远低于目标 |
+| AAC 128 Kbps | 未实现 | 当前 video-only，ffprobe 未发现 audio stream |
+| 严格 `<2 秒` 延迟 | 未实测 | 缺少外部录像和三次读数 |
+| 真实电视兼容 | 未实测 | Kodi 结果不能外推到真实电视 |
+
 ## 本阶段不实现
 
-PR 6 不实现以下能力：
+PR 7 不实现以下能力：
 
 - AAC 音频
-- 延迟 `< 2 秒` 实测
 - HLS
 - 多电视兼容矩阵
 - Kodi 周期性缓冲 / 卡顿优化
-- Release APK
+- DIDL-Lite metadata / DLNA contentFeatures 兼容增强
 - 乐播云商业 SDK 接入
 
-PR 6 继续使用 PR 5 的 H.264 MPEG-TS `/live.ts` 流服务，不重新实现 MPEG-TS，不修改本地流服务主逻辑。`AAC 128 Kbps`、延迟 `< 2 秒`、不同电视兼容性和卡顿优化仍为目标或后续验证项，当前未完成或未实测。
+PR 7 不改投屏核心链路，只验证并整理证据。`AAC 128 Kbps`、不同电视兼容性和卡顿优化仍为后续独立工作；严格 `<2 秒` 延迟测试未完成，缺少外部录像和三次读数，不能写达标。
 
 ## 运行环境
 
@@ -385,6 +411,8 @@ PC 从真实 TS 样本解码出的画面：
 
 PR 5 已提供可由 PC 抓取和解码的 H.264 MPEG-TS 本地流。PR 6 已接入 DLNA AVTransport 控制命令，并已验证 Kodi 可以显示手机画面；但播放存在周期性缓冲 / 卡顿。该结果只证明 AVTransport 控制链路可演示，不证明延迟 `< 2 秒`、长期稳定 `8 Mbps`、AAC `128 Kbps` 或真实电视兼容性已经达成。
 
+PR 7 复测通过 ADB forward 抓取当前 App 本机 `8080` 服务：`curl http://127.0.0.1:18080/live.ts --max-time 10` 收到 `HTTP/1.1 200 OK` 和 `Content-Type: video/mp2t`，样本 `357,388 bytes`。`ffprobe` 识别 `format_name=mpegts`、`codec_name=h264`、`width=1080`、`height=1920`，未发现 audio stream。该证据只证明 App 本机 HTTP 服务和 `live.ts` 内容可读；Windows 直连 `http://192.168.137.44:8080/live.ts` 仍超时，不能写成局域网直连或真实电视端访问已通过。
+
 ## PR 开发顺序
 
 | PR | 内容 | 状态 |
@@ -394,8 +422,8 @@ PR 5 已提供可由 PC 抓取和解码的 H.264 MPEG-TS 本地流。PR 6 已接
 | PR 3 | MediaProjection 权限与采集状态 | 已合并 |
 | PR 4 | H.264 编码参数与展示 | 已合并 |
 | PR 5 | 本地 HTTP 流服务与 PC 播放测试 | 已合并 |
-| PR 6 | DLNA AVTransport 控制 | 当前 PR |
-| PR 7 | 测试报告、截图、README 收尾、Release APK | 未开始 |
+| PR 6 | DLNA AVTransport 控制 | 已合并 |
+| PR 7 | 最终指标验证、测试报告、README 收尾、Release 准备 | 当前 PR |
 
 ## 已知问题
 
@@ -405,8 +433,10 @@ PR 5 已提供可由 PC 抓取和解码的 H.264 MPEG-TS 本地流。PR 6 已接
 - PR 6 使用空 `CurrentURIMetaData`；部分真实电视可能要求 DIDL-Lite metadata 或 DLNA contentFeatures。
 - SOAP 控制成功不代表 Renderer 已播放出画面；PR 6 已验证 Kodi 可显示手机画面，但不能外推到真实电视兼容矩阵。
 - Kodi 播放 `/live.ts` 存在周期性缓冲 / 卡顿，本 PR 不继续优化。
+- PR7 ADB forward 证据不等同于 Windows 局域网直连成功，也不等同于真实电视端可访问；Windows 直连 `192.168.137.44:8080` 当前超时。
 - DLNA 播放测试前必须关闭 `ffplay` / `curl`，避免 `/live.ts` 被占用导致 Renderer 请求失败。
-- H.264 编码配置不等于性能实测，延迟 `< 2 秒` 尚未按可复现方法测量。
+- H.264 编码配置不等于性能实测；PR7 静态样本估算码率远低于 `8 Mbps`，需要动态画面和更长时长复测。
+- 严格 `<2 秒` 延迟尚未按可复现方法测量，缺少外部录像和三次读数。
 - 尚未发布 GitHub Release APK。
 - 系统音频采集受 Android 权限和应用捕获策略限制，后续实现时必须按真实结果记录。
 
@@ -416,10 +446,46 @@ PR 2 参考 UPnP Device Architecture；PR 3 参考 Android 官方 MediaProjectio
 
 ## 截图与录屏
 
-PR 2 已保存 Kodi Renderer 真机发现截图。PR 3 已保存脱敏屏幕采集截图。PR 4 已保存一张竖屏和一张横屏编码参数脱敏截图，并按同一场景紧凑并排展示。PR 5 已保存 PC 从真实 TS 样本解码出的手机 Demo 页面画面。PR 6 不提交 `.ts` 样本、抓包或大体积视频，只记录命令和测试结果摘要。当前小米 ROM 在采集期间执行 `adb screencap` 会触发系统停止采集，因此未保留无效黑屏截图。
+PR7 截图按场景分组，所有截图都必须脱敏；同一场景多张竖屏最多一行 3 张。
+
+### App 启动与设备发现
+
+<img src="docs/screenshots/pr2-kodi-renderer-redacted.jpg" alt="Kodi Renderer 真机发现截图" width="240">
+
+<img src="docs/screenshots/pr7-kodi-renderer-selected-before.png" alt="PR7 Kodi Renderer 发现与 controlURL 截图" width="240"> <img src="docs/screenshots/pr7-kodi-renderer-selected.png" alt="PR7 Kodi Renderer 已选择截图" width="240">
+
+### 屏幕采集与编码参数
+
+<img src="docs/screenshots/pr3-screen-capture-active.png" alt="屏幕采集状态截图" width="240"> <img src="docs/screenshots/pr3-screen-capture-source-options.png" alt="系统录屏授权选项截图" width="240"> <img src="docs/screenshots/pr3-screen-capture-app-choice.png" alt="系统单应用共享选择截图" width="240">
+
+<img src="docs/screenshots/pr4-h264-portrait.png" alt="H.264 竖屏编码参数截图" width="240"> <img src="docs/screenshots/pr4-h264-landscape.png" alt="H.264 横屏编码参数截图" width="480">
+
+### 本地 live.ts / ffprobe / ffplay 验证
+
+<img src="docs/screenshots/pr5-pc-decoded-frame.png" alt="PC 从 MPEG-TS 样本解码出的手机 Demo 页面" width="240">
+
+PR7 使用已安装在 `C:\tmp\ffmpeg-pr5\ffmpeg-8.1.1-essentials_build\bin` 的 FFmpeg 工具，通过 ADB forward 验证当前 App 本机流内容：`HTTP 200`、`video/mp2t`、`mpegts`、`h264`、`1080 x 1920`。Windows 直连手机热点 IP 的 `8080` 端口仍超时，因此 PR7 不新增“PC 局域网直连通过”结论。
+
+### Kodi / DLNA AVTransport 播放验证
+
+PR7 复测已记录 `SetAVTransportURI`、`Play`、`Pause`、`Stop` 均返回 `HTTP 200`。PR6 已由用户确认 Kodi 能显示手机画面；PR7 当前未新增可公开 Kodi 画面截图。
+
+不提交 `.ts` 样本、抓包、外部摄像机原始视频或大体积视频；仓库只保留文档、截图、命令和测试结果摘要。当前小米 ROM 在采集期间执行 `adb screencap` 可能触发系统停止采集，因此截图优先使用外部拍摄或 PC 侧可公开画面。
 
 ## Release 下载
 
 仓库地址：[QieRong/DLNAScreenCastDemo](https://github.com/QieRong/DLNAScreenCastDemo)
 
-Release APK 尚未发布。
+Release APK 尚未发布；PR7 分支只准备 Release 文案和 APK 校验信息。真正的 tag 与 GitHub Release 等 PR7 合并到 `main` 后创建。
+
+```text
+APK 文件名：DLNAScreenCastDemo-v1.0.0-demo.apk
+构建类型：Debug Demo APK
+构建命令：.\gradlew.bat assembleDebug --console=plain
+对应 commit：PR7 合并后的 main commit
+SHA256：PR7 合并后重新构建并计算
+已知问题：Kodi 周期性缓冲、Windows 直连本次超时、AAC 未实现、严格延迟未实测、真实电视兼容未覆盖
+未实现项：AAC 128 Kbps、HLS、DIDL-Lite metadata / DLNA contentFeatures 兼容增强、多电视兼容矩阵
+```
+
+Release 草稿见：[docs/RELEASE_NOTES_v1.0.0-demo.md](docs/RELEASE_NOTES_v1.0.0-demo.md)。
