@@ -1,7 +1,7 @@
 # DLNAScreenCastDemo 最终测试报告
 
 > PR7 目标：尽可能验证技术测试指标，保留真实证据，不把目标值写成已达成结果。
-> 当前结论基于 PR6 已有证据与 PR7 真机复测。无法完成的项目必须写明阻塞原因。
+> PR10 继续补强最终指标证据。无法完成的项目必须写明阻塞原因，不把配置目标写成实测达成。
 
 ## 1. 测试环境
 
@@ -11,11 +11,68 @@
 | Android 版本 | `16`，API `36` |
 | 接收端 | Windows 电脑 + Kodi，作为 DLNA / UPnP Renderer |
 | FFmpeg 工具 | 已找到：`C:\tmp\ffmpeg-pr5\ffmpeg-8.1.1-essentials_build\bin`；未加入当前 PATH，PR7 使用绝对路径 |
-| 本地流验证 | PR7 使用 ADB forward + `curl` + `ffprobe`；Windows 直连手机 IP 失败 |
-| 延迟辅助设备 | vivo X80 可作为外部摄像机；PR7 未完成严格延迟录像测量 |
+| 本地流验证 | PR7 使用 ADB forward + `curl` + `ffprobe` 成功读取 H.264；PR10 复测时 `/live.ts` 返回 `Empty reply from server` |
+| 延迟辅助设备 | vivo X80 可作为外部摄像机；PR10 未完成严格延迟录像测量 |
 | 网络 | Windows 电脑热点 / 同一 Wi-Fi |
 
-## 2. 证据矩阵
+## 2. 证据矩阵（PR10 最终版）
+
+| 指标 | 目标 | 配置层 | ffprobe 识别 | 实测达成 | 证据文件 |
+|---|---|---|---|---|---|
+| 视频分辨率 | 1080P | UI 显示 `1080 x 1920`、`c2.qti.avc.encoder` | PR10 未取得样本；PR7 样本曾识别 `1080 x 1920` | PR10 未复测通过 | `docs/evidence/pr10-http-stream-evidence.md` |
+| 视频码率 | 8 Mbps | UI 显示 `8.0 Mbps`、`CBR` | PR10 未取得 30 秒样本 | 未实测 | `docs/evidence/pr10-http-stream-evidence.md` |
+| 音频规格 | AAC 128Kbps | PR9 已接入 AAC-LC、128Kbps、48kHz、mono 测试音轨 | PR10 未取得样本，不能确认 `audio=aac` | 未通过 | `docs/evidence/pr10-http-stream-evidence.md` |
+| 投屏延迟 | < 2s | N/A | N/A | 未按外部录像三次读数实测 | `docs/evidence/pr10-http-stream-evidence.md` |
+
+说明：
+
+- “配置层”只代表 App / encoder / muxer 的目标参数或 UI 展示，不等于实际输出。
+- “ffprobe 识别”必须来自可读取的 `.ts` 样本。
+- “实测达成”必须来自真机端到端验收，不能由配置层或历史样本替代。
+
+## 3. PR10 HTTP 流复测结论
+
+PR10 复测记录：
+
+```text
+App 状态：采集中
+本地流地址：http://192.168.137.138:8080/live.ts
+编码器：c2.qti.avc.encoder
+实际编码画布：1080 x 1920
+视频码率配置：8.0 Mbps / CBR
+音频：AAC 128Kbps App 内 1kHz 测试音轨已接入
+手机端监听：*:8080 LISTEN
+```
+
+PC 局域网直连：
+
+```text
+Connected to 192.168.137.138:8080
+GET /live.ts HTTP/1.1
+Empty reply from server
+curl: (52) Empty reply from server
+```
+
+手机本机访问：
+
+```text
+Connected to 127.0.0.1:8080
+GET /live.ts HTTP/1.1
+Empty reply from server
+curl: (52) Empty reply from server
+```
+
+ADB forward 路径：
+
+```text
+adb forward tcp:18080 tcp:8080 -> 18080
+adb forward --list -> 空
+curl http://127.0.0.1:18080/live.ts -> Connection refused
+```
+
+结论：本轮不能写成 `live.ts` 可抓取、`ffprobe` 可识别 H.264 + AAC、动态码率可估算或延迟可测。当前最优先后续工作是另开小 PR 排查 `LocalStreamServer` / `StreamSession.open()` 为什么在监听存在时静默关闭 HTTP 连接。
+
+## 4. 历史证据矩阵（PR7）
 
 | 验收项 | 状态 | 证据 / 边界 |
 |---|---|---|
@@ -26,22 +83,22 @@
 | Windows 局域网直连手机 `8080` | FAIL | `curl http://192.168.137.44:8080/live.ts` 和 `Test-NetConnection 192.168.137.44 -Port 8080` 超时 |
 | Kodi DLNA 播放链路 | 部分通过 | PR6 证据显示 Kodi 曾通过 DLNA AVTransport 显示手机画面，但存在周期性缓冲 / 卡顿 |
 | 8Mbps 稳定码率 | 部分通过 | 编码器配置 `8Mbps`；PR7 静态样本估算远低于 `8Mbps`，需要动态画面和更长时长复测 |
-| AAC 128Kbps | 未实现 | 当前 video-only；PR7 `ffprobe` 未发现 audio stream |
+| AAC 128Kbps | PR7 未实现 | PR7 为 video-only；PR9 后已接入测试音轨，但 PR10 未取得样本验证 |
 | 严格 `<2 秒` 延迟 | 未实测 | 缺少外部录像和三次时间差读数，不能写达标 |
 | 真实电视兼容 | 未实测 | Kodi 结果不能外推到真实电视；未覆盖电视兼容矩阵 |
 
-## 3. 最终技术指标表
+## 5. 最终技术指标表
 
 | 指标 | 目标值 | 当前验证方式 | 当前结果 | 状态 |
 |---|---|---|---|---|
 | DLNA 投屏 | 支持 DLNA Renderer | Kodi + AVTransport `SetAVTransportURI` / `Play` | PR6 Kodi 可显示手机画面，但存在周期性缓冲 / 卡顿 | 部分通过 |
 | 投屏延迟 | `< 2 秒` | 秒表 / 外部摄像机对比 | 未完成严格延迟测试，缺少外部录像 / 三次读数 | 未实测 |
 | 分辨率 | `1080P` | App 参数 + `ffprobe` | PR7 样本识别为 `1080 x 1920`；当前小米 14 竖屏样本达到 1080P 目标画布 | PASS |
-| 视频码率 | `8Mbps` | MediaCodec 配置 + 样本估算 | 目标配置 `8Mbps`；PR7 静态样本按 10 秒估算约 `0.29 Mbps`，按 `ffprobe` `bit_rate` 约 `0.030 Mbps` | 部分通过 |
-| 音频规格 | `AAC 128Kbps` | `ffprobe` 音频流检查 | 当前 video-only，未发现 audio stream，AAC 未实现 | 未实现 |
+| 视频码率 | `8Mbps` | MediaCodec 配置 + 样本估算 | 目标配置 `8Mbps`；PR10 未取得 30 秒动态样本，无法估算当前实际码率 | 未实测 |
+| 音频规格 | `AAC 128Kbps` | `ffprobe` 音频流检查 | PR9 已接入 App 内 1kHz AAC 测试音轨；PR10 未取得 `.ts` 样本，不能确认 `audio=aac` | 待修复流读取后复测 |
 | 平台 | Android Demo | 小米 14 真机 APK | 可安装运行；Release APK 待 PR7 合并后发布 | PASS |
 
-## 4. DLNA / Kodi 证据分层
+## 6. DLNA / Kodi 证据分层
 
 ### PR6 证据
 
@@ -124,7 +181,7 @@ Test-NetConnection 192.168.137.44 -Port 8080：TCP connect failed，Ping TimedOu
 
 ADB forward 证据只能证明 App 本机 HTTP 服务和 `live.ts` 内容可读，不能等同于 Windows 局域网直连成功，也不能等同于真实电视端可访问。
 
-## 5. 分辨率验证
+## 7. 分辨率验证
 
 目标：`1080P`。
 
@@ -137,9 +194,9 @@ height=1920
 format_name=mpegts
 ```
 
-结论：当前小米 14 竖屏样本达到 1080P 目标画布。该结论不扩大为所有设备、所有方向或所有场景稳定 `1080P`。
+结论：PR7 当前小米 14 竖屏样本达到 1080P 目标画布。PR10 UI 显示当前配置仍为 `1080 x 1920`，但未取得新样本，因此不新增 ffprobe 通过结论。
 
-## 6. 视频码率验证
+## 8. 视频码率验证
 
 目标配置码率：`8Mbps`。
 
@@ -172,23 +229,31 @@ ffprobe bit_rate：30364 bps
 bit_rate=30364 bps ≈ 0.030 Mbps
 ```
 
-说明：两个结果都是静态画面短样本估算，不代表稳定吞吐。PR7 只能写“编码器配置 `8Mbps`，PR7 静态样本实测吞吐远低于 `8Mbps`，需动态画面和更长时长复测”，不能写“视频码率已达 `8Mbps`”。
+说明：两个结果都是 PR7 静态画面短样本估算，不代表稳定吞吐。PR10 因 `/live.ts` 空响应未取得 30 秒动态样本，不能写“视频码率已达 `8Mbps`”。
 
-## 7. 音频规格验证
+## 9. 音频规格验证
 
 目标：`AAC 128Kbps`。
 
-PR7 结果：
+PR9 已接入：
 
 ```text
-当前流为 video-only。
-ffprobe 未发现 audio stream。
-AAC 128Kbps 未实现。
+AudioEncoderConfig：AAC-LC / 128000 bps / 48000 Hz / mono
+音频来源：App 内 1kHz 正弦波测试音
+未实现：系统内录、麦克风采集
 ```
 
-结论：音频规格未实现，不能写“音频规格已达成”。
+PR10 结果：
 
-## 8. 投屏延迟验证
+```text
+/live.ts 当前返回 Empty reply from server。
+未取得 .ts 样本。
+ffprobe 未能验证 audio=aac。
+```
+
+结论：只能写“AAC 测试音轨已接入”；不能写“ffprobe 已识别 AAC”或“音频规格已端到端达成”。
+
+## 10. 投屏延迟验证
 
 目标：`<2 秒`。
 
@@ -200,7 +265,7 @@ AAC 128Kbps 未实现。
 4. 通过视频暂停观察两边时间差。
 5. 至少记录 3 次并计算平均值。
 
-PR7 记录：
+PR10 记录：
 
 ```text
 第 1 次：未测
@@ -209,9 +274,9 @@ PR7 记录：
 平均：未测
 ```
 
-结论：严格 `<2 秒` 测试未完成，缺少外部录像和三次读数；不能只凭肉眼判断，不能写达标。
+结论：严格 `<2 秒` 测试未完成，缺少可读取 `/live.ts` 和外部录像三次读数；不能只凭肉眼判断，不能写达标。
 
-## 9. Release 准备
+## 11. Release 准备
 
 PR7 分支只准备 Release 信息；真正 tag 和 GitHub Release 必须等 PR7 合并到 `main` 后创建。APK 不提交到仓库。
 
@@ -239,13 +304,13 @@ git push origin v1.0.0-demo
 
 然后在 GitHub Release 上传 `DLNAScreenCastDemo-v1.0.0-demo.apk`，并写入 APK SHA256、构建命令、对应 commit、已知问题和未实现项。
 
-## 10. 最终结论
+## 12. 最终结论
 
 本 Demo 已完成一个可演示的 Android DLNA 投屏原型。PR6 证据显示 Kodi 曾通过 DLNA AVTransport 显示手机画面，但有周期性缓冲 / 卡顿。PR7 证据显示 App 本机 HTTP 服务可通过 ADB forward 读取，`live.ts` 内容为 MPEG-TS + H.264，当前小米 14 竖屏样本为 `1080 x 1920`。
 
-当前不能写成“全部指标达成”：Windows 局域网直连 `192.168.137.44:8080` 本次超时，真实电视兼容未实测，AAC 128Kbps 未实现，严格 `<2 秒` 延迟未实测，8Mbps 稳定吞吐未证明。
+当前不能写成“全部指标达成”：PR10 复测发现 `/live.ts` 在 PC 直连和手机本机 curl 下均返回 `Empty reply from server`，导致 AAC ffprobe、30 秒动态码率和严格延迟读数均无法完成。真实电视兼容未实测，8Mbps 稳定吞吐未证明。
 
-## 11. 本地门禁状态
+## 13. 本地门禁状态
 
 PR7 当前已完成：
 
@@ -264,7 +329,28 @@ Windows 局域网直连 live.ts：FAIL，192.168.137.44:8080 超时
 APK SHA256：待 PR7 合并 main 后重新构建 Release APK 并计算
 ```
 
-## 12. 截图证据
+PR10 当前完成：
+
+```text
+.\gradlew.bat assembleDebug --console=plain：PASS，BUILD SUCCESSFUL
+adb install -r app\build\outputs\apk\debug\app-debug.apk：PASS
+UI 文案：已显示 PR10 和 AAC 测试音轨边界
+手机端 8080 监听：PASS
+```
+
+PR10 当前未完成 / 阻塞：
+
+```text
+.\gradlew.bat testDebugUnitTest lintDebug assembleDebug --console=plain：未执行完成，Codex 提权请求因当前使用额度限制被系统拒绝
+ADB forward：当前环境中 forward 未稳定保留，127.0.0.1:18080 连接拒绝
+PC 局域网直连 live.ts：TCP 连接成功，但 Empty reply from server
+手机本机 curl live.ts：Empty reply from server
+ffprobe H.264 + AAC：未取得 .ts 样本，无法验证
+30 秒动态码率：未取得样本，无法估算
+严格 <2 秒延迟测试：未实测
+```
+
+## 14. 截图证据
 
 PR7 新增截图：
 
@@ -273,10 +359,12 @@ PR7 新增截图：
 
 不提交 `.ts` 样本、抓包、外部摄像机原始视频或大体积视频。
 
-## 13. 后续独立工作
+## 15. 后续独立工作
 
 PR7 合并后如继续优化，不在 PR7 分支叠加，需从最新 `main` 新建独立分支：
 
 - `fix/low-latency-buffering`
 - `feat/aac-audio-encoding`
 - `test/latency-measurement`
+- `fix/stream-session-empty-reply`
+- `fix/audio-encoder-cleanup`
