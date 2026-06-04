@@ -1,5 +1,6 @@
 package com.qierong.dlnascreencastdemo.stream
 
+import android.util.Log
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
@@ -34,7 +35,8 @@ class StreamSession private constructor(
         if (started.get() && Thread.currentThread() !== writerThread) writerThread.interrupt()
     }
 
-    private fun startWriting() {
+    // 内部可见，供 open() 在握手成功后调用
+    internal fun startWriting() {
         if (!closed.get() && started.compareAndSet(false, true)) writerThread.start()
     }
 
@@ -53,6 +55,7 @@ class StreamSession private constructor(
     }
 
     companion object {
+        private const val TAG = "StreamSession"
         private const val LIVE_PATH = "/live.ts"
         private const val MAX_PENDING_CHUNKS = 64
         private const val MAX_HEADER_LINES = 64
@@ -61,31 +64,56 @@ class StreamSession private constructor(
         private const val WRITER_POLL_TIMEOUT_MS = 250L
         private val ASCII = StandardCharsets.US_ASCII
 
+        /**
+         * 从 [socket] 读取 HTTP 请求并握手。
+         *
+         * 握手成功时：
+         * 1. 写出 HTTP 200 响应头（含 Content-Type: video/mp2t）
+         * 2. 清除 soTimeout，防止流传输期间超时断连
+         * 3. 启动后台写线程
+         * 4. 调用 [onReady]，将 session 加入活跃集合
+         *
+         * 若握手失败（任何 IOException 或请求格式错误），返回 null 并关闭 socket。
+         *
+         * @param socket 已建立的 TCP 连接
+         * @param onReady 握手 + 响应头写出 + writer 启动完成后的回调
+         * @return 握手成功时的 [StreamSession]，失败时为 null
+         */
         fun open(
             socket: Socket,
             onReady: (StreamSession) -> Unit = {},
         ): StreamSession? {
             return try {
+                // 握手阶段限时 2s，避免慢客户端长期占用线程
                 socket.soTimeout = REQUEST_TIMEOUT_MS
                 socket.tcpNoDelay = true
+                val remoteAddr = socket.remoteSocketAddress.toString()
                 val input = socket.getInputStream()
+
                 val requestLine = readAsciiLine(input)
-                    ?: return reject(socket, "400 Bad Request")
-                if (!consumeHeaders(input)) return reject(socket, "400 Bad Request")
+                    ?: return reject(socket, "400 Bad Request", remoteAddr, "请求行为空")
+                if (!consumeHeaders(input)) {
+                    return reject(socket, "400 Bad Request", remoteAddr, "请求头解析失败")
+                }
+
+                // 记录请求行，方便 logcat 确认请求路径
+                Log.d(TAG, "[$remoteAddr] 请求行：$requestLine")
+
                 val parts = requestLine.split(' ')
                 when {
                     parts.size != 3 || !parts[2].startsWith("HTTP/") ->
-                        reject(socket, "400 Bad Request")
+                        reject(socket, "400 Bad Request", remoteAddr, "请求行格式错误：$requestLine")
 
                     parts[0] != "GET" ->
-                        reject(socket, "405 Method Not Allowed")
+                        reject(socket, "405 Method Not Allowed", remoteAddr, "不支持的方法：${parts[0]}")
 
                     parts[1] != LIVE_PATH ->
-                        reject(socket, "404 Not Found")
+                        reject(socket, "404 Not Found", remoteAddr, "未知路径：${parts[1]}")
 
                     else -> {
                         val session = StreamSession(socket)
-                        onReady(session)
+
+                        // ① 先写 HTTP 响应头，保证客户端能收到 200 OK
                         socket.getOutputStream().apply {
                             write(
                                 (
@@ -98,18 +126,48 @@ class StreamSession private constructor(
                             )
                             flush()
                         }
+
+                        // ② 清除读超时，流传输期间不设 soTimeout
                         socket.soTimeout = 0
+
+                        // ③ 启动后台写线程，准备好接收 TS 数据
                         session.startWriting()
+
+                        // ④ 最后加入活跃集合，触发首包 replay
+                        onReady(session)
+
+                        Log.i(TAG, "[$remoteAddr] 握手成功，开始推流")
                         session
                     }
                 }
-            } catch (_: IOException) {
+            } catch (exception: IOException) {
+                // IOException 不静默吞掉，记录实际异常类型方便定位根因
+                // 最常见路径：SocketTimeoutException（握手期间超时）、连接重置等
+                Log.w(
+                    TAG,
+                    "HTTP 握手失败（${runCatching { socket.remoteSocketAddress }.getOrNull()}）：" +
+                        "${exception::class.simpleName} — ${exception.message}",
+                )
                 runCatching(socket::close)
                 null
             }
         }
 
-        private fun reject(socket: Socket, status: String): StreamSession? {
+        /**
+         * 向客户端返回错误响应并关闭连接，同时记录日志。
+         *
+         * @param socket 待关闭的 socket
+         * @param status HTTP 状态描述，如 "404 Not Found"
+         * @param remoteAddr 客户端地址，仅用于日志
+         * @param reason 失败原因，仅用于日志
+         */
+        private fun reject(
+            socket: Socket,
+            status: String,
+            remoteAddr: String,
+            reason: String,
+        ): StreamSession? {
+            Log.d(TAG, "[$remoteAddr] 拒绝请求 → $status（$reason）")
             runCatching {
                 socket.getOutputStream().apply {
                     write(
@@ -127,6 +185,11 @@ class StreamSession private constructor(
             return null
         }
 
+        /**
+         * 消费 HTTP 请求头直到遇到空行，确保请求体之前的所有头被读完。
+         *
+         * @return 成功消费到空行返回 true，读取失败或超出限制返回 false
+         */
         private fun consumeHeaders(input: InputStream): Boolean {
             repeat(MAX_HEADER_LINES) {
                 val line = readAsciiLine(input) ?: return false
@@ -135,6 +198,12 @@ class StreamSession private constructor(
             return false
         }
 
+        /**
+         * 从输入流中读取一行 ASCII 文本（以 '\n' 或 "\r\n" 结尾）。
+         *
+         * @return 读取到的行内容（不含换行符），流关闭且无内容时返回 null
+         * @throws IOException 读取过程中发生 IO 错误或行长度超限
+         */
         private fun readAsciiLine(input: InputStream): String? {
             val output = ByteArrayOutputStream()
             while (true) {
