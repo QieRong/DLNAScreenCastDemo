@@ -34,6 +34,10 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+    testOptions {
+        // 让 JVM 单元测试中 android.util.Log 等 Android stub 方法返回默认值而非抛出异常
+        unitTests.isReturnDefaultValues = true
+    }
     buildFeatures {
         compose = true
     }
