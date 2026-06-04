@@ -1,6 +1,6 @@
 # 指标演示与动态测试页测试指南
 
-> PR8 只新增指标演示辅助页面和测试文档，不修改 PR7 / `v1.0.0-demo` 的历史测试结论，不移动已发布 tag，不覆盖已发布 APK 说明。PR8 的目标是提供“可复现测试入口”，不是宣称指标达成。
+> PR8 只新增指标演示辅助页面和测试文档，不修改 PR7 / `v1.0.0-demo` 的历史测试结论，不移动已发布 tag，不覆盖已发布 APK 说明。PR8 的目标是提供“可复现测试入口”，不是宣称指标达成。PR9 已接入 AAC 测试音轨；PR10 使用本指南补强 ffprobe、动态码率和延迟证据，但若 `/live.ts` 不能读取，所有相关指标都必须继续写未实测或未验证。
 
 ## 1. 页面入口
 
@@ -74,6 +74,8 @@
 ```powershell
 adb forward tcp:18080 tcp:8080
 
+adb forward --list
+
 curl.exe -v http://127.0.0.1:18080/live.ts `
   --output app\build\tmp\DLNAScreenCastDemo-dynamic-30s.ts `
   --max-time 30
@@ -133,7 +135,7 @@ height=1920
 codec_type=audio 是否存在
 ```
 
-当前 PR8 不实现 AAC。若 `ffprobe` 未发现 audio stream，应继续记录“音频：未实现 / ffprobe 未发现 audio stream”。
+PR9 已接入 App 内 1kHz AAC 测试音轨。若 `ffprobe` 未发现 audio stream，或像 PR10 当前复测一样未取得有效 `.ts` 样本，应继续记录“音频：测试音轨已接入，但 ffprobe 未验证 / 未识别”，不能写成音频规格已达成。
 
 ## 8. 测试记录模板
 
@@ -162,3 +164,4 @@ ffprobe 摘要：
 - 本 PR 不接入乐播云或其他商业 SDK。
 - 页面只用于辅助录像和动态样本测试，不代表指标自动达成。
 - 若 PR8 合并后需要发布新版本，建议使用 `v1.1.0-metrics-demo`，不要重写 `v1.0.0-demo`。
+- PR10 复测若遇到 `/live.ts` 返回 `Empty reply from server`，应先记录证据并另开修复 PR，不应在指标文档中写 ffprobe、动态码率或延迟已通过。
