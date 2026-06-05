@@ -3,10 +3,11 @@ package com.qierong.dlnascreencastdemo.stream
 import com.qierong.dlnascreencastdemo.encoder.EncodedVideoOutputSink
 
 class MpegTsStreamPipeline(
+    private val includeAudio: Boolean = false,
     private val publish: (ByteArray, Boolean) -> Unit,
 ) : EncodedVideoOutputSink {
     private var normalizer = AvcAnnexBNormalizer()
-    private var muxer = MpegTsMuxer()
+    private var muxer = MpegTsMuxer(includeAudio = includeAudio)
     private var waitingForKeyFrame = true
 
     @Synchronized
@@ -42,6 +43,7 @@ class MpegTsStreamPipeline(
      */
     @Synchronized
     fun onAudioAccessUnit(data: ByteArray, presentationTimeUs: Long) {
+        if (!includeAudio) return
         if (waitingForKeyFrame) return  // 等待视频关键帧后才开始推送，保持播放端同步
         val tsPackets = muxer.muxAudioAccessUnit(data, presentationTimeUs)
         publish(tsPackets, false)
@@ -50,7 +52,7 @@ class MpegTsStreamPipeline(
     @Synchronized
     fun reset() {
         normalizer = AvcAnnexBNormalizer()
-        muxer = MpegTsMuxer()
+        muxer = MpegTsMuxer(includeAudio = includeAudio)
         waitingForKeyFrame = true
     }
 }

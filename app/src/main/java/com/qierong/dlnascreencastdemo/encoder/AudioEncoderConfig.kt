@@ -3,8 +3,8 @@ package com.qierong.dlnascreencastdemo.encoder
 /**
  * AAC-LC 编码目标参数。
  *
- * 本阶段产生 App 内置 1kHz 正弦波测试音轨，
- * 不代表系统内录或麦克风采集已实现。
+ * 这些参数保留给历史测试音编码器和后续真实音频编码复用。
+ * PR13 起运行时默认不启动 App 内测试音。
  */
 object AudioEncoderConfig {
     /** MIME 类型：AAC-LC Low Complexity */

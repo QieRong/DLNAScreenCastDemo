@@ -39,8 +39,8 @@ internal fun StreamStatusCard(
     } else {
         """
             当前视频流：$streamUrl
-            格式：MPEG-TS + H.264 视频 + AAC 测试音轨
-            说明：AAC 来源为 App 内 1kHz 正弦波，是否被播放端识别以 ffprobe / 播放器实测为准；系统内录和麦克风采集未实现，延迟仍未实测。
+            格式：MPEG-TS + H.264 视频（video-only）
+            说明：PR13 起默认不再输出 App 内 1kHz 测试音；AAC/ADTS/MPEG-TS 音频封装能力保留给显式音频路径。真实系统播放音待 PR14 实现和验证，延迟仍未实测。
         """.trimIndent()
     }
     StatusCard(title = "本地流地址", detail = detail, modifier = modifier)

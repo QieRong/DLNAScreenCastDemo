@@ -20,14 +20,14 @@ class MetricsStatusTest {
         assertEquals("待开始采集", items.requireMetric("分辨率").current)
         assertEquals("动态样本待测", items.requireMetric("视频码率").current)
         assertEquals("需 30 秒动态页面 curl 样本", items.requireMetric("视频码率").evidence)
-        assertEquals("AAC 128Kbps 测试音轨：已接入", items.requireMetric("音频").current)
+        assertEquals("默认 video-only；测试音运行时已禁用", items.requireMetric("音频").current)
         assertTrue(
             "音频证据说明应包含'测试音'",
             items.requireMetric("音频").evidence.contains("测试音"),
         )
         assertTrue(
-            "音频证据说明应包含'未实现'",
-            items.requireMetric("音频").evidence.contains("未实现"),
+            "音频证据说明应包含'PR14'",
+            items.requireMetric("音频").evidence.contains("PR14"),
         )
 
     }

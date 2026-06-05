@@ -8,7 +8,7 @@ class MpegTsAudioMuxTest {
     @Test
     fun muxAudioAccessUnit_emitsFixedSizePacketsWithSyncBytes() {
         val adtsFrame = fakeAdtsFrame(rawAacSize = 100)
-        val output = MpegTsMuxer().muxAudioAccessUnit(
+        val output = MpegTsMuxer(includeAudio = true).muxAudioAccessUnit(
             adtsFrame = adtsFrame,
             presentationTimeUs = 0,
         )
@@ -22,7 +22,7 @@ class MpegTsAudioMuxTest {
     @Test
     fun muxAudioAccessUnit_firstPacketHasPayloadUnitStartAndCorrectPid() {
         val adtsFrame = fakeAdtsFrame(rawAacSize = 50)
-        val packets = MpegTsMuxer().muxAudioAccessUnit(
+        val packets = MpegTsMuxer(includeAudio = true).muxAudioAccessUnit(
             adtsFrame = adtsFrame,
             presentationTimeUs = 21_333,
         ).tsPackets()
@@ -39,7 +39,7 @@ class MpegTsAudioMuxTest {
     fun muxAudioAccessUnit_allPacketsHaveAudioPid() {
         // 大帧会拆成多个 TS 包
         val adtsFrame = fakeAdtsFrame(rawAacSize = 500)
-        val packets = MpegTsMuxer().muxAudioAccessUnit(
+        val packets = MpegTsMuxer(includeAudio = true).muxAudioAccessUnit(
             adtsFrame = adtsFrame,
             presentationTimeUs = 0,
         ).tsPackets()
@@ -54,7 +54,7 @@ class MpegTsAudioMuxTest {
     @Test
     fun muxAudioAccessUnit_ptsUsing90KhzClock() {
         // presentationTimeUs = 1_000_000 μs → 90kHz = 90_000 ticks
-        val pts = MpegTsMuxer().muxAudioAccessUnit(
+        val pts = MpegTsMuxer(includeAudio = true).muxAudioAccessUnit(
             adtsFrame = fakeAdtsFrame(rawAacSize = 30),
             presentationTimeUs = 1_000_000L,
         ).tsPackets().first().audioPacketPts()
@@ -65,7 +65,7 @@ class MpegTsAudioMuxTest {
     @Test
     fun muxAudioAccessUnit_pmtCrcIsValidAfterAudioExtension() {
         // 验证扩展后的 PMT CRC 仍然正确（回归：PMT_SECTION_LENGTH 改变后 CRC 必须重算）
-        val packets = MpegTsMuxer().muxVideoAccessUnit(
+        val packets = MpegTsMuxer(includeAudio = true).muxVideoAccessUnit(
             annexB = byteArrayOf(0, 0, 0, 1, 0x65) + ByteArray(20),
             presentationTimeUs = 0,
             isKeyFrame = false,
@@ -84,7 +84,7 @@ class MpegTsAudioMuxTest {
 
     @Test
     fun muxAudioAccessUnit_continuityCounterIncrements() {
-        val muxer = MpegTsMuxer()
+        val muxer = MpegTsMuxer(includeAudio = true)
         val firstPackets = muxer.muxAudioAccessUnit(
             adtsFrame = fakeAdtsFrame(rawAacSize = 50),
             presentationTimeUs = 0,
