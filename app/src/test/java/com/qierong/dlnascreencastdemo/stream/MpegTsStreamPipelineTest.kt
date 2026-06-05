@@ -43,8 +43,49 @@ class MpegTsStreamPipelineTest {
         assertEquals(2, published.size)
     }
 
+    @Test
+    fun onAudioAccessUnit_videoOnlyPipelineIgnoresAudioFrames() {
+        val published = mutableListOf<PublishedChunk>()
+        val pipeline = MpegTsStreamPipeline(includeAudio = false) { data, isBootstrap ->
+            published += PublishedChunk(data, isBootstrap)
+        }
+        pipeline.onOutputFormat(annexB(sps), annexB(pps))
+        pipeline.onAccessUnit(annexB(idr), presentationTimeUs = 0, isKeyFrame = true)
+
+        pipeline.onAudioAccessUnit(fakeAdtsFrame(), presentationTimeUs = 21_333)
+
+        assertEquals(1, published.size)
+    }
+
+    @Test
+    fun onAudioAccessUnit_includeAudioPublishesAfterKeyFrame() {
+        val published = mutableListOf<PublishedChunk>()
+        val pipeline = MpegTsStreamPipeline(includeAudio = true) { data, isBootstrap ->
+            published += PublishedChunk(data, isBootstrap)
+        }
+        pipeline.onOutputFormat(annexB(sps), annexB(pps))
+        pipeline.onAccessUnit(annexB(idr), presentationTimeUs = 0, isKeyFrame = true)
+
+        pipeline.onAudioAccessUnit(fakeAdtsFrame(), presentationTimeUs = 21_333)
+
+        assertEquals(2, published.size)
+        assertTrue(published.last().data.allPacketsStartWithSyncByte())
+    }
+
     private fun annexB(vararg nalUnits: ByteArray): ByteArray =
         nalUnits.flatMap { START_CODE.asIterable() + it.asIterable() }.toByteArray()
+
+    private fun fakeAdtsFrame(): ByteArray =
+        byteArrayOf(
+            0xFF.toByte(),
+            0xF1.toByte(),
+            0x50.toByte(),
+            0x40.toByte(),
+            0x03.toByte(),
+            0x7F.toByte(),
+            0xFC.toByte(),
+        ) +
+            ByteArray(20)
 
     private fun ByteArray.allPacketsStartWithSyncByte(): Boolean =
         size % TS_PACKET_SIZE == 0 &&

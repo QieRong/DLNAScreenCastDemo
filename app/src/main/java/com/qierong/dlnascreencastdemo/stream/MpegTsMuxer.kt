@@ -2,7 +2,9 @@ package com.qierong.dlnascreencastdemo.stream
 
 import java.io.ByteArrayOutputStream
 
-class MpegTsMuxer {
+class MpegTsMuxer(
+    private val includeAudio: Boolean = false,
+) {
     private val continuityCounters = mutableMapOf<Int, Int>()
     private var emittedTables = false
 
@@ -41,6 +43,7 @@ class MpegTsMuxer {
         adtsFrame: ByteArray,
         presentationTimeUs: Long,
     ): ByteArray {
+        check(includeAudio) { "Audio stream must be declared in PMT before muxing audio access units" }
         require(adtsFrame.isNotEmpty()) { "ADTS frame must not be empty" }
         require(presentationTimeUs >= 0) { "Audio presentation time must not be negative" }
 
@@ -214,36 +217,46 @@ class MpegTsMuxer {
             ),
         )
 
-    private fun pmtSection(): ByteArray =
-        withCrc(
+    private fun pmtSection(): ByteArray {
+        val sectionLength = if (includeAudio) {
+            PMT_AUDIO_VIDEO_SECTION_LENGTH
+        } else {
+            PMT_VIDEO_ONLY_SECTION_LENGTH
+        }
+        val baseSection = byteArrayOf(
+            PMT_TABLE_ID,
+            SECTION_SYNTAX_HIGH_BITS,
+            sectionLength,
+            0,
+            PROGRAM_NUMBER,
+            CURRENT_NEXT_VERSION,
+            0,
+            0,
+            pidHigh(VIDEO_PID),
+            VIDEO_PID.toByte(),
+            NO_DESCRIPTORS_HIGH_BITS,
+            0,
+            // 视频流 ES info：H.264
+            H264_STREAM_TYPE,
+            pidHigh(VIDEO_PID),
+            VIDEO_PID.toByte(),
+            NO_DESCRIPTORS_HIGH_BITS,
+            0,
+        )
+        val audioSection = if (includeAudio) {
             byteArrayOf(
-                PMT_TABLE_ID,
-                SECTION_SYNTAX_HIGH_BITS,
-                // section_length = 23 = 0x17：14（原视频 body）+ 5（音频 ES info）+ 4（CRC）
-                PMT_SECTION_LENGTH,
-                0,
-                PROGRAM_NUMBER,
-                CURRENT_NEXT_VERSION,
-                0,
-                0,
-                pidHigh(VIDEO_PID),
-                VIDEO_PID.toByte(),
-                NO_DESCRIPTORS_HIGH_BITS,
-                0,
-                // 视频流 ES info：H.264
-                H264_STREAM_TYPE,
-                pidHigh(VIDEO_PID),
-                VIDEO_PID.toByte(),
-                NO_DESCRIPTORS_HIGH_BITS,
-                0,
                 // 音频流 ES info：AAC（stream_type=0x0f，ADTS 封装）
                 AAC_STREAM_TYPE,
                 pidHigh(AUDIO_PID),
                 AUDIO_PID.toByte(),
                 NO_DESCRIPTORS_HIGH_BITS,
                 0,
-            ),
-        )
+            )
+        } else {
+            byteArrayOf()
+        }
+        return withCrc(baseSection + audioSection)
+    }
 
     private fun pidHigh(pid: Int): Byte = (RESERVED_PID_BITS or ((pid shr 8) and PID_HIGH_MASK)).toByte()
 
@@ -331,12 +344,10 @@ class MpegTsMuxer {
         /** 音频 PES stream_id：0xC0 = 第一个 MPEG audio stream */
         private const val AUDIO_STREAM_ID: Byte = 0xC0.toByte()
         private const val PAT_SECTION_LENGTH: Byte = 0x0d
-        /**
-         * PMT section_length = 23 = 0x17。
-         * 原值 0x12(18)：4 字节 PCR PID + program info len + video ES(5) + CRC(4) = 14 body + 4 CRC = 18。
-         * 新增音频 ES(5) → body = 19，加 CRC = 23 = 0x17。
-         */
-        private const val PMT_SECTION_LENGTH: Byte = 0x17
+        /** PMT section_length = 18 = video-only section body + CRC. */
+        private const val PMT_VIDEO_ONLY_SECTION_LENGTH: Byte = 0x12
+        /** PMT section_length = 23 = video section + AAC ES info + CRC. */
+        private const val PMT_AUDIO_VIDEO_SECTION_LENGTH: Byte = 0x17
         private const val TRANSPORT_STREAM_ID: Byte = 0x01
         private const val PROGRAM_NUMBER: Byte = 0x01
 

@@ -1,7 +1,7 @@
 # DLNAScreenCastDemo 最终测试报告
 
 > PR7 目标：尽可能验证技术测试指标，保留真实证据，不把目标值写成已达成结果。
-> PR10 继续补强最终指标证据。无法完成的项目必须写明阻塞原因，不把配置目标写成实测达成。
+> PR10 继续补强最终指标证据。PR13 禁用运行时默认 1kHz 测试音源；PR14 真实系统播放音仍待实现和真机验证。无法完成的项目必须写明阻塞原因，不把配置目标写成实测达成。
 
 ## 1. 测试环境
 
@@ -21,7 +21,7 @@
 |---|---|---|---|---|---|
 | 视频分辨率 | 1080P | UI 显示 `1080 x 1920`、`c2.qti.avc.encoder` | PR10 未取得样本；PR7 样本曾识别 `1080 x 1920` | PR10 未复测通过 | `docs/evidence/pr10-http-stream-evidence.md` |
 | 视频码率 | 8 Mbps | UI 显示 `8.0 Mbps`、`CBR` | PR10 未取得 30 秒样本 | 未实测 | `docs/evidence/pr10-http-stream-evidence.md` |
-| 音频规格 | AAC 128Kbps | PR9 已接入 AAC-LC、128Kbps、48kHz、mono 测试音轨 | PR10 未取得样本，不能确认 `audio=aac` | 未通过 | `docs/evidence/pr10-http-stream-evidence.md` |
+| 音频规格 | AAC 128Kbps | PR9 曾用 AAC-LC、128Kbps、48kHz、mono 测试音验证封装；PR13 起默认禁用测试音 | PR10 未取得样本，不能确认 `audio=aac`；PR13 当前默认 video-only | 待 PR14 | `docs/evidence/pr10-http-stream-evidence.md` |
 | 投屏延迟 | < 2s | N/A | N/A | 未按外部录像三次读数实测 | `docs/evidence/pr10-http-stream-evidence.md` |
 
 说明：
@@ -40,7 +40,7 @@ App 状态：采集中
 编码器：c2.qti.avc.encoder
 实际编码画布：1080 x 1920
 视频码率配置：8.0 Mbps / CBR
-音频：AAC 128Kbps App 内 1kHz 测试音轨已接入
+音频：PR10 当时为 AAC 128Kbps App 内 1kHz 测试音轨；PR13 起默认禁用运行时测试音
 手机端监听：*:8080 LISTEN
 ```
 
@@ -70,7 +70,7 @@ adb forward --list -> 空
 curl http://127.0.0.1:18080/live.ts -> Connection refused
 ```
 
-结论：本轮不能写成 `live.ts` 可抓取、`ffprobe` 可识别 H.264 + AAC、动态码率可估算或延迟可测。当前最优先后续工作是另开小 PR 排查 `LocalStreamServer` / `StreamSession.open()` 为什么在监听存在时静默关闭 HTTP 连接。
+结论：本轮不能写成 `live.ts` 可抓取、`ffprobe` 可识别 H.264 + AAC、动态码率可估算或延迟可测。PR12 已修复 HTTP 握手路径；后续复测必须保存新样本证据。
 
 ## 4. 历史证据矩阵（PR7）
 
@@ -83,7 +83,7 @@ curl http://127.0.0.1:18080/live.ts -> Connection refused
 | Windows 局域网直连手机 `8080` | FAIL | `curl http://192.168.137.44:8080/live.ts` 和 `Test-NetConnection 192.168.137.44 -Port 8080` 超时 |
 | Kodi DLNA 播放链路 | 部分通过 | PR6 证据显示 Kodi 曾通过 DLNA AVTransport 显示手机画面，但存在周期性缓冲 / 卡顿 |
 | 8Mbps 稳定码率 | 部分通过 | 编码器配置 `8Mbps`；PR7 静态样本估算远低于 `8Mbps`，需要动态画面和更长时长复测 |
-| AAC 128Kbps | PR7 未实现 | PR7 为 video-only；PR9 后已接入测试音轨，但 PR10 未取得样本验证 |
+| AAC 128Kbps | PR7 未实现 | PR7 为 video-only；PR9 后曾接入测试音轨验证封装，PR13 起默认禁用运行时测试音；真实系统音频待 PR14 |
 | 严格 `<2 秒` 延迟 | 未实测 | 缺少外部录像和三次时间差读数，不能写达标 |
 | 真实电视兼容 | 未实测 | Kodi 结果不能外推到真实电视；未覆盖电视兼容矩阵 |
 
@@ -95,7 +95,7 @@ curl http://127.0.0.1:18080/live.ts -> Connection refused
 | 投屏延迟 | `< 2 秒` | 秒表 / 外部摄像机对比 | 未完成严格延迟测试，缺少外部录像 / 三次读数 | 未实测 |
 | 分辨率 | `1080P` | App 参数 + `ffprobe` | PR7 样本识别为 `1080 x 1920`；当前小米 14 竖屏样本达到 1080P 目标画布 | PASS |
 | 视频码率 | `8Mbps` | MediaCodec 配置 + 样本估算 | 目标配置 `8Mbps`；PR10 未取得 30 秒动态样本，无法估算当前实际码率 | 未实测 |
-| 音频规格 | `AAC 128Kbps` | `ffprobe` 音频流检查 | PR9 已接入 App 内 1kHz AAC 测试音轨；PR10 未取得 `.ts` 样本，不能确认 `audio=aac` | 待修复流读取后复测 |
+| 音频规格 | `AAC 128Kbps` | `ffprobe` 音频流检查 + 真机听感验证 | PR9 曾用 App 内 1kHz AAC 测试音验证封装；PR13 起默认禁用运行时测试音，当前默认 video-only | 待 PR14 |
 | 平台 | Android Demo | 小米 14 真机 APK | 可安装运行；Release APK 待 PR7 合并后发布 | PASS |
 
 ## 6. DLNA / Kodi 证据分层
@@ -243,6 +243,15 @@ AudioEncoderConfig：AAC-LC / 128000 bps / 48000 Hz / mono
 未实现：系统内录、麦克风采集
 ```
 
+PR13 当前状态：
+
+```text
+运行时默认测试音：已禁用
+默认 MPEG-TS：video-only，不声明 audio PID
+保留能力：AAC 编码参数、ADTS 封装、MPEG-TS 音频封装单元测试
+真实系统播放音频：待 PR14 实现和验证
+```
+
 PR10 结果：
 
 ```text
@@ -251,7 +260,7 @@ PR10 结果：
 ffprobe 未能验证 audio=aac。
 ```
 
-结论：只能写“AAC 测试音轨已接入”；不能写“ffprobe 已识别 AAC”或“音频规格已端到端达成”。
+结论：只能写“PR9 曾用测试音验证封装，PR13 默认 video-only”；不能写“ffprobe 已识别 AAC”“真实系统音频已达成”或“音频规格已端到端达成”。
 
 ## 10. 投屏延迟验证
 
@@ -308,7 +317,7 @@ git push origin v1.0.0-demo
 
 本 Demo 已完成一个可演示的 Android DLNA 投屏原型。PR6 证据显示 Kodi 曾通过 DLNA AVTransport 显示手机画面，但有周期性缓冲 / 卡顿。PR7 证据显示 App 本机 HTTP 服务可通过 ADB forward 读取，`live.ts` 内容为 MPEG-TS + H.264，当前小米 14 竖屏样本为 `1080 x 1920`。
 
-当前不能写成“全部指标达成”：PR10 复测发现 `/live.ts` 在 PC 直连和手机本机 curl 下均返回 `Empty reply from server`，导致 AAC ffprobe、30 秒动态码率和严格延迟读数均无法完成。真实电视兼容未实测，8Mbps 稳定吞吐未证明。
+当前不能写成“全部指标达成”：PR10 复测发现 `/live.ts` 在 PC 直连和手机本机 curl 下均返回 `Empty reply from server`，导致 AAC ffprobe、30 秒动态码率和严格延迟读数均无法完成；PR12 已修复 HTTP 握手路径，但仍需新样本复核。PR13 默认禁用测试音，真实系统音频待 PR14。真实电视兼容未实测，8Mbps 稳定吞吐未证明。
 
 ## 13. 本地门禁状态
 
@@ -348,6 +357,14 @@ PC 局域网直连 live.ts：TCP 连接成功，但 Empty reply from server
 ffprobe H.264 + AAC：未取得 .ts 样本，无法验证
 30 秒动态码率：未取得样本，无法估算
 严格 <2 秒延迟测试：未实测
+```
+
+PR13 当前完成：
+
+```text
+UI 文案：显示默认 video-only、PR9 测试音为历史封装验证、真实系统播放音待 PR14
+默认 TS：MpegTsMuxer(includeAudio=false)，PMT 不声明 audio PID
+保留能力：MpegTsMuxer(includeAudio=true) 可显式封装 AAC ADTS
 ```
 
 ## 14. 截图证据

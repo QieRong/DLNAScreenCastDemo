@@ -9,11 +9,11 @@ class HomeUiStateTest {
     fun initialHomeState_marksDlnaControlPhaseAndMetricsBoundary() {
         val state = HomeUiState()
 
-        assertEquals("PR 10：最终指标证据补强", state.currentPhase)
-        assertTrue(state.metricsNotice.contains("ffprobe"))
-        assertTrue(state.metricsNotice.contains("AAC 测试音轨已接入"))
-        assertTrue(state.metricsNotice.contains("延迟仍需外部录像实测"))
-        assertTrue(state.plannedFeatures.contains("已完成：AAC 128Kbps App 内测试音轨封装"))
-        assertTrue(state.plannedFeatures.contains("本 PR：补充 ffprobe、动态码率、延迟读数和证据矩阵"))
+        assertEquals("PR 13：禁用运行时默认测试音", state.currentPhase)
+        assertTrue(state.metricsNotice.contains("1kHz 测试音"))
+        assertTrue(state.metricsNotice.contains("video-only"))
+        assertTrue(state.metricsNotice.contains("真实系统播放音待 PR14"))
+        assertTrue(state.plannedFeatures.contains("历史：PR9 曾用 1kHz 测试音验证 AAC 封装链路"))
+        assertTrue(state.plannedFeatures.contains("本 PR：禁用运行时默认测试音，默认 MPEG-TS 为 H.264 video-only"))
     }
 }
