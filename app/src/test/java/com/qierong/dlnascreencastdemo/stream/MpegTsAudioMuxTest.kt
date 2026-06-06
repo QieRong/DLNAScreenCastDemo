@@ -36,6 +36,23 @@ class MpegTsAudioMuxTest {
     }
 
     @Test
+    fun muxAudioAccessUnit_stuffsLastPacketWithAdaptationField() {
+        val adtsFrame = fakeAdtsFrame(rawAacSize = 50)
+        val packet = MpegTsMuxer(includeAudio = true).muxAudioAccessUnit(
+            adtsFrame = adtsFrame,
+            presentationTimeUs = 0,
+        ).tsPackets().single()
+
+        assertTrue("短音频 PES 应使用 adaptation field 填充最后一个 TS 包", packet.hasAdaptationField())
+
+        val payload = packet.copyOfRange(packet.payloadOffset(), packet.size)
+        val pesPacketLength = (payload[4].unsigned() shl 8) or payload[5].unsigned()
+        val fullPesSize = 6 + pesPacketLength
+
+        assertEquals("payload 不应包含 PES 以外的 0xff 填充字节", fullPesSize, payload.size)
+    }
+
+    @Test
     fun muxAudioAccessUnit_allPacketsHaveAudioPid() {
         // 大帧会拆成多个 TS 包
         val adtsFrame = fakeAdtsFrame(rawAacSize = 500)
@@ -124,11 +141,11 @@ class MpegTsAudioMuxTest {
     }
 
     /**
-     * 解析音频 TS 包中 PES 的 PTS（假设无 adaptation field，PES 从 byte 4 开始）。
+     * 解析音频 TS 包中 PES 的 PTS。
      * PTS 位于 PES header 中：start_code(3) + stream_id(1) + length(2) + flags(3) + PTS(5)
      */
     private fun ByteArray.audioPacketPts(): Long {
-        val pesOffset = TS_HEADER_SIZE  // 音频包无 adaptation field
+        val pesOffset = payloadOffset()
         val ptsOffset = pesOffset + 9   // start_code(3)+stream_id(1)+length(2)+marker(1)+pts_flag(1)+hdr_len(1)
         return ((this[ptsOffset].unsigned().toLong() shr 1 and 0x07) shl 30) or
             (this[ptsOffset + 1].unsigned().toLong() shl 22) or
@@ -145,6 +162,11 @@ class MpegTsAudioMuxTest {
     private fun ByteArray.continuityCounter(): Int = this[3].unsigned() and 0x0f
 
     private fun ByteArray.hasPayloadUnitStart(): Boolean = this[1].unsigned() and 0x40 != 0
+
+    private fun ByteArray.payloadOffset(): Int =
+        if (hasAdaptationField()) 5 + this[4].unsigned() else TS_HEADER_SIZE
+
+    private fun ByteArray.hasAdaptationField(): Boolean = this[3].unsigned() and 0x20 != 0
 
     private fun ByteArray.psiSection(): ByteArray {
         val payloadOffset = if (this[3].unsigned() and 0x20 != 0) 5 + this[4].unsigned() else 4

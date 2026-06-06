@@ -3,6 +3,7 @@ package com.qierong.dlnascreencastdemo.feature.metrics
 import com.qierong.dlnascreencastdemo.capture.CaptureConfig
 import com.qierong.dlnascreencastdemo.capture.CaptureSessionInfo
 import com.qierong.dlnascreencastdemo.capture.CaptureState
+import com.qierong.dlnascreencastdemo.capture.PlaybackAudioStatus
 import com.qierong.dlnascreencastdemo.encoder.ActiveEncoderConfig
 import com.qierong.dlnascreencastdemo.encoder.BitrateMode
 import com.qierong.dlnascreencastdemo.encoder.EncoderConfig
@@ -20,14 +21,14 @@ class MetricsStatusTest {
         assertEquals("待开始采集", items.requireMetric("分辨率").current)
         assertEquals("动态样本待测", items.requireMetric("视频码率").current)
         assertEquals("需 30 秒动态页面 curl 样本", items.requireMetric("视频码率").evidence)
-        assertEquals("默认 video-only；测试音运行时已禁用", items.requireMetric("音频").current)
+        assertEquals("待开始采集", items.requireMetric("音频").current)
         assertTrue(
-            "音频证据说明应包含'测试音'",
-            items.requireMetric("音频").evidence.contains("测试音"),
+            "音频证据说明应包含'ffprobe'",
+            items.requireMetric("音频").evidence.contains("ffprobe"),
         )
         assertTrue(
-            "音频证据说明应包含'PR14'",
-            items.requireMetric("音频").evidence.contains("PR14"),
+            "音频证据说明应包含'PC/Kodi/ffplay'",
+            items.requireMetric("音频").evidence.contains("PC/Kodi/ffplay"),
         )
 
     }
@@ -53,14 +54,18 @@ class MetricsStatusTest {
                         isDegraded = false,
                     ),
                     streamUrl = "http://192.168.1.8:8080/live.ts",
+                    audioStatus = PlaybackAudioStatus.FirstAudioTsPacket,
                 ),
             ),
         )
 
         val resolution = items.requireMetric("分辨率")
+        val audio = items.requireMetric("音频")
 
         assertEquals("1080 x 1920", resolution.current)
         assertTrue(resolution.evidence.contains("当前 CaptureState"))
+        assertEquals("first audio TS packet", audio.current)
+        assertTrue(audio.evidence.contains("首个 AAC 音频 access unit"))
     }
 
     @Test

@@ -118,18 +118,31 @@ class MpegTsMuxer(
         var offset = 0
         var firstPacket = true
         while (offset < pes.size) {
-            val payloadSize = minOf(
-                pes.size - offset,
-                TS_PACKET_SIZE - TS_HEADER_SIZE,
-            )
+            val remaining = pes.size - offset
+            val hasAdaptationField = remaining < TS_PAYLOAD_SIZE
+            val payloadSize = if (hasAdaptationField) remaining else TS_PAYLOAD_SIZE
+            val adaptationLength = if (hasAdaptationField) {
+                TS_PAYLOAD_SIZE - ADAPTATION_LENGTH_SIZE - payloadSize
+            } else {
+                0
+            }
             val packet = ByteArray(TS_PACKET_SIZE) { STUFFING_BYTE }
             writeHeader(
                 packet = packet,
                 pid = AUDIO_PID,
                 payloadUnitStart = firstPacket,
-                hasAdaptationField = false,
+                hasAdaptationField = hasAdaptationField,
             )
-            pes.copyInto(packet, TS_HEADER_SIZE, offset, offset + payloadSize)
+            val payloadOffset = if (hasAdaptationField) {
+                packet[TS_HEADER_SIZE] = adaptationLength.toByte()
+                if (adaptationLength > 0) {
+                    packet[TS_HEADER_SIZE + ADAPTATION_LENGTH_SIZE] = 0
+                }
+                TS_HEADER_SIZE + ADAPTATION_LENGTH_SIZE + adaptationLength
+            } else {
+                TS_HEADER_SIZE
+            }
+            pes.copyInto(packet, payloadOffset, offset, offset + payloadSize)
             offset += payloadSize
             firstPacket = false
             packets += packet

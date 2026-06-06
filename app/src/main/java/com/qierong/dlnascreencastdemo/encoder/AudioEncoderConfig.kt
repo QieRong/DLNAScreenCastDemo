@@ -3,8 +3,7 @@ package com.qierong.dlnascreencastdemo.encoder
 /**
  * AAC-LC 编码目标参数。
  *
- * 这些参数保留给历史测试音编码器和后续真实音频编码复用。
- * PR13 起运行时默认不启动 App 内测试音。
+ * PR14 起这些参数用于真实 AudioPlaybackCapture PCM 的 AAC 编码。
  */
 object AudioEncoderConfig {
     /** MIME 类型：AAC-LC Low Complexity */
@@ -36,15 +35,6 @@ object AudioEncoderConfig {
      * 1024 / 48000 ≈ 21333 μs
      */
     const val FRAME_DURATION_US = SAMPLES_PER_FRAME * 1_000_000L / SAMPLE_RATE
-
-    /** 测试音频频率：1kHz 正弦波 */
-    const val TEST_TONE_FREQUENCY_HZ = 1_000.0
-
-    /**
-     * 测试音量比例（相对于 Short.MAX_VALUE）。
-     * 设为 0.25 避免削波，听感轻微。
-     */
-    const val TEST_TONE_AMPLITUDE = 0.25
 
     /** ADTS 头固定长度（字节），无 CRC 版本 */
     const val ADTS_HEADER_SIZE = 7

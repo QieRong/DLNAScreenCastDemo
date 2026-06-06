@@ -3,6 +3,7 @@ package com.qierong.dlnascreencastdemo.encoder
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
+import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
@@ -24,6 +25,23 @@ class VideoEncoder private constructor(
     private val draining = AtomicBoolean(true)
     private val released = AtomicBoolean(false)
     private val bufferInfo = MediaCodec.BufferInfo()
+    private val syncFrameRunnable = object : Runnable {
+        override fun run() {
+            if (!draining.get() || released.get()) return
+            runCatching {
+                codec.setParameters(
+                    Bundle().apply {
+                        putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0)
+                    },
+                )
+            }.onFailure { exception ->
+                Log.w(TAG, "请求 H.264 sync frame 失败：${exception.message}")
+            }
+            if (draining.get() && !released.get()) {
+                workerHandler.postDelayed(this, SYNC_FRAME_INTERVAL_MS)
+            }
+        }
+    }
     private val drainRunnable = object : Runnable {
         override fun run() {
             if (!draining.get()) return
@@ -48,12 +66,14 @@ class VideoEncoder private constructor(
 
     init {
         workerHandler.post(drainRunnable)
+        workerHandler.postDelayed(syncFrameRunnable, SYNC_FRAME_INTERVAL_MS)
     }
 
     fun stop() {
         if (!released.compareAndSet(false, true)) return
         draining.set(false)
         workerHandler.removeCallbacks(drainRunnable)
+        workerHandler.removeCallbacks(syncFrameRunnable)
         releaseSequence.release()
         Log.i(TAG, "H.264 编码器已释放：${statsSummary(outputTracker.snapshot())}")
     }
@@ -150,6 +170,7 @@ class VideoEncoder private constructor(
         private const val CSD_1 = "csd-1"
         private const val DEQUEUE_TIMEOUT_US = 0L
         private const val DRAIN_INTERVAL_MS = 10L
+        private const val SYNC_FRAME_INTERVAL_MS = 1_000L
         private const val FINAL_DRAIN_TIMEOUT_MS = 150L
         private const val FINAL_DRAIN_SLEEP_MS = 10L
 

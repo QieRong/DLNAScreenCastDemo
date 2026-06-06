@@ -3,6 +3,8 @@
 /.agents
 /.idea
 /.kotlin
+/.tmp-evidence
+/演示必看
 /local.properties
 /docs/superpowers
 /skills-lock.json

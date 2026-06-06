@@ -76,6 +76,10 @@ class ScreenCaptureService : Service() {
             val manager = ScreenCaptureManager(
                 mediaProjection = mediaProjection,
                 configProvider = configProvider,
+                playbackAudioPermissionGranted = intent.getBooleanExtra(
+                    EXTRA_PLAYBACK_AUDIO_PERMISSION_GRANTED,
+                    false,
+                ),
                 onSessionChanged = stateStore::markCapturing,
                 onReconfiguring = stateStore::markReconfiguring,
                 onError = ::failAndStop,
@@ -183,14 +187,25 @@ class ScreenCaptureService : Service() {
             "com.qierong.dlnascreencastdemo.capture.action.STOP"
         private const val EXTRA_RESULT_CODE = "result_code"
         private const val EXTRA_RESULT_DATA = "result_data"
+        private const val EXTRA_PLAYBACK_AUDIO_PERMISSION_GRANTED =
+            "playback_audio_permission_granted"
         private const val NOTIFICATION_CHANNEL_ID = "screen_capture"
         private const val NOTIFICATION_ID = 1001
 
-        fun start(context: Context, resultCode: Int, resultData: Intent) {
+        fun start(
+            context: Context,
+            resultCode: Int,
+            resultData: Intent,
+            playbackAudioPermissionGranted: Boolean,
+        ) {
             val intent = Intent(context, ScreenCaptureService::class.java)
                 .setAction(ACTION_START)
                 .putExtra(EXTRA_RESULT_CODE, resultCode)
                 .putExtra(EXTRA_RESULT_DATA, resultData)
+                .putExtra(
+                    EXTRA_PLAYBACK_AUDIO_PERMISSION_GRANTED,
+                    playbackAudioPermissionGranted,
+                )
             ContextCompat.startForegroundService(context, intent)
         }
 

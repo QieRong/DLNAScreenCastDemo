@@ -34,13 +34,21 @@ internal fun StreamStatusCard(
         is CaptureState.Reconfiguring -> state.sessionInfo.streamUrl
         else -> null
     }
+    val audioStatus = when (state) {
+        is CaptureState.Capturing -> state.sessionInfo.audioStatus
+        is CaptureState.Reconfiguring -> state.sessionInfo.audioStatus
+        else -> null
+    }
     val detail = if (streamUrl == null) {
         "尚未启动本地流。开始采集后可在同一局域网 PC 使用 curl、ffprobe 或 ffplay 访问 /live.ts。"
     } else {
         """
             当前视频流：$streamUrl
-            格式：MPEG-TS + H.264 视频（video-only）
-            说明：PR13 起默认不再输出 App 内 1kHz 测试音；AAC/ADTS/MPEG-TS 音频封装能力保留给显式音频路径。真实系统播放音待 PR14 实现和验证，延迟仍未实测。
+            格式：MPEG-TS + H.264 视频${if (audioStatus == null) "" else " + PR14 播放音采集状态"}
+            音频阶段：${audioStatus?.label ?: "未启动"}
+            音频说明：${audioStatus?.detail ?: "真实系统播放音尚未启用。"}
+            捕获限制：AudioPlaybackCapture 仅支持 Android 10+、同一用户资料、usage 为 MEDIA/GAME/UNKNOWN 且目标 App capture policy 允许的播放音；目标 App 可能禁止捕获。
+            声音路由：PR14 先验证捕获、编码和接收端播放链路；手机端自动静音未证明，不能写成已达成。
         """.trimIndent()
     }
     StatusCard(title = "本地流地址", detail = detail, modifier = modifier)

@@ -47,15 +47,6 @@ class AudioEncoderConfigTest {
     }
 
     @Test
-    fun testToneAmplitude_isLessThanOne() {
-        // 测试音量不应超过满幅，避免爆音
-        assertTrue(
-            "测试音量 ${AudioEncoderConfig.TEST_TONE_AMPLITUDE} 不应超过 1.0",
-            AudioEncoderConfig.TEST_TONE_AMPLITUDE < 1.0,
-        )
-    }
-
-    @Test
     fun adtsHeaderSize_isSeven() {
         // ADTS 无 CRC 头部固定 7 字节
         assertEquals(7, AudioEncoderConfig.ADTS_HEADER_SIZE)

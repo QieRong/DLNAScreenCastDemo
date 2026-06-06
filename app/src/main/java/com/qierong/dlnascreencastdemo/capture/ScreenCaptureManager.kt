@@ -3,12 +3,14 @@ package com.qierong.dlnascreencastdemo.capture
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.projection.MediaProjection
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
 import android.view.Surface
 import com.qierong.dlnascreencastdemo.encoder.AndroidAvcEncoderCatalog
 import com.qierong.dlnascreencastdemo.encoder.ActiveEncoderConfig
+import com.qierong.dlnascreencastdemo.encoder.AudioEncoder
 import com.qierong.dlnascreencastdemo.encoder.EncoderConfigSelector
 import com.qierong.dlnascreencastdemo.encoder.VideoEncoder
 import com.qierong.dlnascreencastdemo.stream.LocalStreamServer
@@ -19,6 +21,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 internal class ScreenCaptureManager(
     private val mediaProjection: MediaProjection,
     private val configProvider: AndroidCaptureConfigProvider,
+    private val playbackAudioPermissionGranted: Boolean,
     private val onSessionChanged: (CaptureSessionInfo) -> Unit,
     private val onReconfiguring: (CaptureSessionInfo, CaptureConfig) -> Unit,
     private val onError: (String) -> Unit,
@@ -34,10 +37,15 @@ internal class ScreenCaptureManager(
     private val workerHandler = Handler(workerThread.looper)
     private var callbackRegistered = false
     private var videoEncoder: VideoEncoder? = null
+    private var audioEncoder: AudioEncoder? = null
+    private var playbackAudioCapture: PlaybackAudioCapture? = null
     /** 保存当前 pipeline 引用，供分辨率变化时重用 */
     private var streamPipeline: MpegTsStreamPipeline? = null
     private var sessionInfo: CaptureSessionInfo? = null
     private var streamUrl: String? = null
+    private var audioStatus: PlaybackAudioStatus = PlaybackAudioStatus.DegradedVideoOnly(
+        "真实系统播放音尚未启用，当前为 video-only。",
+    )
     private val resizeDebouncer = LatestValueDebouncer<CaptureConfig>(
         schedule = { runnable -> workerHandler.postDelayed(runnable, RESIZE_DEBOUNCE_MS) },
         cancel = workerHandler::removeCallbacks,
@@ -86,9 +94,8 @@ internal class ScreenCaptureManager(
             "未检测到可用于 PC 播放的局域网 IPv4 地址"
         }
         Log.i(STREAM_TAG, "本地流地址：$streamUrl")
-        val pipeline = MpegTsStreamPipeline { data, replayOnConnect ->
-            streamServer.publish(data, replayOnConnect)
-        }.also { streamServer.clearReplayChunk() }
+        streamServer.clearReplayChunk()
+        val pipeline = createStreamPipeline()
         streamPipeline = pipeline
         val initialEncoder = createVideoEncoder(initialConfig, pipeline)
         videoEncoder = initialEncoder
@@ -102,7 +109,7 @@ internal class ScreenCaptureManager(
         ) {
             "无法创建 VirtualDisplay"
         }
-        val initialSession = CaptureSessionInfo(initialConfig, initialEncoder.activeConfig, streamUrl)
+        val initialSession = createSessionInfo(initialConfig, initialEncoder.activeConfig)
         sessionInfo = initialSession
         Log.i(
             TAG,
@@ -132,7 +139,7 @@ internal class ScreenCaptureManager(
             return
         }
         if (currentSession.encoderConfig.hasSameCanvas(targetEncoderConfig)) {
-            val updatedSession = CaptureSessionInfo(config, currentSession.encoderConfig, streamUrl)
+            val updatedSession = createSessionInfo(config, currentSession.encoderConfig)
             sessionInfo = updatedSession
             Log.d(TAG, "编码画布未变化，忽略重复重建请求")
             onSessionChanged(updatedSession)
@@ -161,7 +168,7 @@ internal class ScreenCaptureManager(
         val previous = videoEncoder
         videoEncoder = replacement
         previous?.stop()
-        val updatedSession = CaptureSessionInfo(config, replacement.activeConfig, streamUrl)
+        val updatedSession = createSessionInfo(config, replacement.activeConfig)
         sessionInfo = updatedSession
         Log.i(
             TAG,
@@ -186,6 +193,120 @@ internal class ScreenCaptureManager(
             outputSink = pipeline,
         )
     }
+
+    private fun createStreamPipeline(): MpegTsStreamPipeline {
+        if (!playbackAudioPermissionGranted) {
+            updateAudioStatus(PlaybackAudioStatus.PermissionNotGranted)
+            return createVideoOnlyPipeline()
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            updateAudioStatus(PlaybackAudioStatus.ApiUnsupported)
+            return createVideoOnlyPipeline()
+        }
+
+        lateinit var pipeline: MpegTsStreamPipeline
+        var audioPublishingEnabled = false
+        var firstAacReported = false
+        var firstTsReported = false
+        val encoder = AudioEncoder(
+            onAudioFrame = { adtsFrame, presentationTimeUs ->
+                if (!firstAacReported) {
+                    firstAacReported = true
+                    updateAudioStatus(PlaybackAudioStatus.FirstAacFrame)
+                }
+                val published = pipeline.onAudioAccessUnit(adtsFrame, presentationTimeUs)
+                if (published && !firstTsReported) {
+                    firstTsReported = true
+                    updateAudioStatus(PlaybackAudioStatus.FirstAudioTsPacket)
+                }
+            },
+            onError = { detail ->
+                degradePlaybackAudio("AAC 编码失败，已停止音频链路并保留视频投屏：$detail")
+            },
+        )
+        if (!encoder.start()) {
+            encoder.stop()
+            updateAudioStatus(
+                PlaybackAudioStatus.DegradedVideoOnly(
+                    "AAC 编码器启动失败，当前降级为 video-only。",
+                ),
+            )
+            return createVideoOnlyPipeline()
+        }
+
+        pipeline = MpegTsStreamPipeline(includeAudio = true) { data, replayOnConnect ->
+            streamServer.publish(data, replayOnConnect)
+        }
+        val capture = PlaybackAudioCapture(
+            mediaProjection = mediaProjection,
+            onPcmFrame = { pcm, presentationTimeUs, _ ->
+                if (audioPublishingEnabled) {
+                    encoder.queuePcmFrame(pcm, presentationTimeUs)
+                }
+            },
+            onStatus = { status ->
+                if (status is PlaybackAudioStatus.NonSilentPcm) {
+                    audioPublishingEnabled = true
+                }
+                if (status == PlaybackAudioStatus.PossiblySilentOrDisallowed) {
+                    audioPublishingEnabled = false
+                }
+                updateAudioStatus(status)
+            },
+            onError = { detail ->
+                degradePlaybackAudio("$detail，已停止音频链路并保留视频投屏。")
+            },
+        )
+        if (!capture.start()) {
+            encoder.stop()
+            updateAudioStatus(
+                PlaybackAudioStatus.DegradedVideoOnly(
+                    "AudioRecord 初始化失败，当前降级为 video-only。",
+                ),
+            )
+            return createVideoOnlyPipeline()
+        }
+        audioEncoder = encoder
+        playbackAudioCapture = capture
+        return pipeline
+    }
+
+    private fun createVideoOnlyPipeline(): MpegTsStreamPipeline =
+        MpegTsStreamPipeline(includeAudio = false) { data, replayOnConnect ->
+            streamServer.publish(data, replayOnConnect)
+        }
+
+    @Synchronized
+    private fun updateAudioStatus(status: PlaybackAudioStatus) {
+        audioStatus = status
+        val current = sessionInfo ?: return
+        val updated = current.copy(audioStatus = status)
+        sessionInfo = updated
+        onSessionChanged(updated)
+    }
+
+    private fun degradePlaybackAudio(detail: String) {
+        stopPlaybackAudio()
+        updateAudioStatus(PlaybackAudioStatus.DegradedVideoOnly(detail))
+    }
+
+    private fun stopPlaybackAudio() {
+        playbackAudioCapture?.stop()
+        playbackAudioCapture = null
+        audioEncoder?.stop()
+        audioEncoder = null
+    }
+
+    private fun createSessionInfo(
+        sourceConfig: CaptureConfig,
+        encoderConfig: ActiveEncoderConfig,
+    ): CaptureSessionInfo =
+        CaptureSessionInfo(
+            sourceConfig = sourceConfig,
+            encoderConfig = encoderConfig,
+            streamUrl = streamUrl,
+            audioStatus = audioStatus,
+        )
 
     private fun selectEncoderConfig(sourceConfig: CaptureConfig): ActiveEncoderConfig =
         requireNotNull(
@@ -213,6 +334,7 @@ internal class ScreenCaptureManager(
     private fun release(stopProjection: Boolean, notifyReleased: Boolean = true) {
         if (!released.compareAndSet(false, true)) return
         resizeDebouncer.cancel()
+        stopPlaybackAudio()
         val cleanup = CaptureResourceCleanup(
             releaseVirtualDisplay = virtualDisplayLifecycle::release,
             releaseVideoEncoder = {

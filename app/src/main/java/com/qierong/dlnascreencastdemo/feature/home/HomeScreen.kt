@@ -107,6 +107,26 @@ private fun HomeContent(
             StatusCard(title = "当前阶段", detail = state.currentPhase)
         }
         item {
+            VerificationGuideCard(
+                deviceState = deviceState,
+                captureState = captureState,
+                dlnaControlState = dlnaControlState,
+            )
+        }
+        item {
+            PrimaryActionCard(
+                deviceState = deviceState,
+                captureState = captureState,
+                dlnaControlState = dlnaControlState,
+                onSearchDevices = onSearchDevices,
+                onStartCapture = onStartCapture,
+                onStopCapture = onStopCapture,
+                onSendToRenderer = onSendToRenderer,
+                onPauseRenderer = onPauseRenderer,
+                onStopRenderer = onStopRenderer,
+            )
+        }
+        item {
             StatusCard(title = "性能指标", detail = state.metricsNotice)
         }
         item {
@@ -142,32 +162,6 @@ private fun HomeContent(
             }
         }
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = onSearchDevices,
-                    enabled = !deviceState.isSearching,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(text = if (deviceState.isSearching) "正在搜索设备..." else "搜索 DLNA 设备")
-                }
-                Button(
-                    onClick = onStartCapture,
-                    enabled = !captureState.hasActiveSession,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(text = "开始采集")
-                }
-                Button(
-                    onClick = onStopCapture,
-                    enabled = captureState.hasActiveSession &&
-                        captureState != CaptureState.RequestingPermission,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(text = "停止采集")
-                }
-            }
-        }
-        item {
             CaptureStatusCard(state = captureState)
         }
         item {
@@ -175,17 +169,6 @@ private fun HomeContent(
         }
         item {
             StreamStatusCard(state = captureState)
-        }
-        item {
-            DlnaControlCard(
-                state = dlnaControlState,
-                onSendToRenderer = onSendToRenderer,
-                onPauseRenderer = onPauseRenderer,
-                onStopRenderer = onStopRenderer,
-            )
-        }
-        item {
-            DiscoveryStatusCard(status = deviceState.status)
         }
         if (deviceState.status == DeviceDiscoveryStatus.Empty) {
             item {
@@ -225,6 +208,149 @@ private fun HomeContent(
             }
         }
     }
+}
+
+@Composable
+private fun PrimaryActionCard(
+    deviceState: DeviceListUiState,
+    captureState: CaptureState,
+    dlnaControlState: DlnaControlUiState,
+    onSearchDevices: () -> Unit,
+    onStartCapture: () -> Unit,
+    onStopCapture: () -> Unit,
+    onSendToRenderer: () -> Unit,
+    onPauseRenderer: () -> Unit,
+    onStopRenderer: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Card(modifier = modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = "按顺序操作",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                text = buildOperationStatus(deviceState, dlnaControlState),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Button(
+                onClick = onSearchDevices,
+                enabled = !deviceState.isSearching,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(text = if (deviceState.isSearching) "正在搜索设备..." else "1. 搜索 DLNA 设备（先打开 Kodi）")
+            }
+            Button(
+                onClick = onStartCapture,
+                enabled = !captureState.hasActiveSession,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(text = "3. 开始采集（录音 + 录屏授权）")
+            }
+            Button(
+                onClick = onSendToRenderer,
+                enabled = dlnaControlState.canSendToRenderer,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(text = "4. 发送到 Kodi / 开始播放")
+            }
+            Button(
+                onClick = onPauseRenderer,
+                enabled = dlnaControlState.canPause,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(text = "暂停 Kodi")
+            }
+            Button(
+                onClick = onStopRenderer,
+                enabled = dlnaControlState.canStopRemotePlayback,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(text = "停止 Kodi 播放")
+            }
+            Button(
+                onClick = onStopCapture,
+                enabled = captureState.hasActiveSession &&
+                    captureState != CaptureState.RequestingPermission,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(text = "停止采集")
+            }
+        }
+    }
+}
+
+private fun buildOperationStatus(
+    deviceState: DeviceListUiState,
+    dlnaControlState: DlnaControlUiState,
+): String {
+    val discoveryLine = "设备发现：${deviceDiscoverySummary(deviceState.status)}"
+    val rendererLine = dlnaControlState.selectedDevice?.let { device ->
+        "目标 Renderer：${device.friendlyName}（${device.ipAddress}）"
+    } ?: "目标 Renderer：未选择"
+    val playbackLine = "Kodi 播放状态：${dlnaStatusSummary(dlnaControlState.status)}"
+    return "$discoveryLine\n$rendererLine\n$playbackLine"
+}
+
+private fun deviceDiscoverySummary(status: DeviceDiscoveryStatus): String = when (status) {
+    DeviceDiscoveryStatus.Idle -> "尚未搜索"
+    DeviceDiscoveryStatus.Searching -> "正在搜索"
+    DeviceDiscoveryStatus.Empty -> "未发现 Renderer"
+    is DeviceDiscoveryStatus.Success -> "已发现 ${status.count} 个 Renderer"
+    DeviceDiscoveryStatus.PermissionDenied -> "附近设备权限被拒绝"
+    DeviceDiscoveryStatus.WifiDisconnected -> "Wi-Fi 未连接"
+    is DeviceDiscoveryStatus.Error -> "搜索失败：${status.detail}"
+}
+
+private fun dlnaStatusSummary(status: DlnaControlStatus): String = when (status) {
+    DlnaControlStatus.NoRendererSelected -> "未选择 Renderer"
+    DlnaControlStatus.DeviceNotControllable -> "设备缺少 AVTransport controlURL"
+    DlnaControlStatus.LocalStreamNotStarted -> "本地 /live.ts 未启动"
+    is DlnaControlStatus.InProgress -> "正在执行 ${status.stage.label}"
+    DlnaControlStatus.UriSet -> "已设置播放地址"
+    DlnaControlStatus.Playing -> "命令已发送，需观察 Kodi 画面和声音"
+    DlnaControlStatus.Paused -> "已暂停"
+    DlnaControlStatus.Stopped -> "已停止"
+    is DlnaControlStatus.Failed -> "失败：${status.reason.toDisplayName()}"
+}
+
+@Composable
+private fun VerificationGuideCard(
+    deviceState: DeviceListUiState,
+    captureState: CaptureState,
+    dlnaControlState: DlnaControlUiState,
+    modifier: Modifier = Modifier,
+) {
+    StatusCard(
+        title = "PR14 真机验证步骤",
+        detail = """
+            当前下一步：${buildVerificationNextStep(deviceState, captureState, dlnaControlState)}
+
+            1. 电脑端先打开 Kodi，并确认 UPnP / DLNA Renderer 已开启。
+            2. 手机先播放本地 MP4，优先选有倒计时、击掌或节奏点的视频，媒体音量不要为 0。
+            3. 回到本 App，按按钮顺序：搜索 DLNA 设备 -> 选择 Renderer -> 开始采集 -> 发送到 Kodi；如果系统询问采集范围，必须选择整个屏幕，不要选择单个 App。
+            4. 接收端听到目标 MP4 声音后，再用 vivo X80 录接收端画面和声音，做人工观察级音画同步判断。
+            5. PR14 不验证手机端静音或远端独占出声；抖音只作为第二轮附加验证。
+        """.trimIndent(),
+        modifier = modifier,
+    )
+}
+
+internal fun buildVerificationNextStep(
+    deviceState: DeviceListUiState,
+    captureState: CaptureState,
+    dlnaControlState: DlnaControlUiState,
+): String = when {
+    deviceState.isSearching -> "等待搜索完成，看到 Kodi 后点“2. 选择这个 Renderer”。"
+    dlnaControlState.selectedDevice == null -> "先打开 Kodi，然后点“1. 搜索 DLNA 设备（先打开 Kodi）”。"
+    !captureState.hasActiveSession -> "先播放本地 MP4 并确认音量，然后点“3. 开始采集（录音 + 录屏授权）”。"
+    captureState == CaptureState.RequestingPermission -> "在系统弹窗里允许录音和录屏权限。"
+    captureState == CaptureState.Starting -> "等待采集启动并出现 /live.ts 地址。"
+    dlnaControlState.status !is DlnaControlStatus.Playing -> "点“4. 发送到 Kodi / 开始播放”，让 Kodi 重新拉取当前 /live.ts。"
+    else -> "观察 Kodi 是否播放当前手机画面和目标 MP4 声音，并录制接收端证据。"
 }
 
 @Composable
@@ -314,7 +440,7 @@ private fun DeviceCard(
                 enabled = !isSelected,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(text = if (isSelected) "已选择 Renderer" else "选择 Renderer")
+                Text(text = if (isSelected) "已选择 Renderer" else "2. 选择这个 Renderer")
             }
         }
     }
@@ -346,7 +472,7 @@ private fun DlnaControlCard(
                 enabled = state.canSendToRenderer,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(text = "发送到 Renderer / 开始播放")
+                Text(text = "4. 发送到 Kodi / 开始播放")
             }
             Button(
                 onClick = onPauseRenderer,

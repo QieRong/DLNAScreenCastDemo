@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
@@ -14,6 +15,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -48,8 +50,22 @@ class MainActivity : ComponentActivity() {
                 val captureState by captureViewModel.uiState.collectAsStateWithLifecycle()
                 val dlnaControlViewModel: DlnaControlViewModel = viewModel()
                 val dlnaControlState by dlnaControlViewModel.uiState.collectAsStateWithLifecycle()
+                LaunchedEffect(deviceState.devices, dlnaControlState.selectedDevice) {
+                    val singleDevice = deviceState.devices.singleOrNull()
+                    if (singleDevice?.avTransportControlUrl != null &&
+                        dlnaControlState.selectedDevice == null
+                    ) {
+                        dlnaControlViewModel.selectDevice(singleDevice)
+                    }
+                }
                 var metricsDemoPage by rememberSaveable {
                     mutableStateOf<MetricsDemoPage?>(null)
+                }
+                var audioPermissionRequestedThisSession by rememberSaveable {
+                    mutableStateOf(false)
+                }
+                var pendingPlaybackAudioPermission by rememberSaveable {
+                    mutableStateOf(false)
                 }
                 val projectionManager = remember {
                     getSystemService(MediaProjectionManager::class.java)
@@ -74,6 +90,7 @@ class MainActivity : ComponentActivity() {
                                 context = applicationContext,
                                 resultCode = result.resultCode,
                                 resultData = resultData,
+                                playbackAudioPermissionGranted = pendingPlaybackAudioPermission,
                             )
                         }.onFailure { exception ->
                             captureViewModel.onServiceStartFailed(
@@ -97,6 +114,29 @@ class MainActivity : ComponentActivity() {
                     contract = ActivityResultContracts.RequestPermission(),
                 ) { isGranted ->
                     capturePermissionCoordinator.onNotificationPermissionResult(isGranted)
+                }
+                fun startProjectionFlow(playbackAudioPermissionGranted: Boolean) {
+                    pendingPlaybackAudioPermission = playbackAudioPermissionGranted
+                    val needsNotificationPermission =
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                            ContextCompat.checkSelfPermission(
+                                this@MainActivity,
+                                POST_NOTIFICATIONS_PERMISSION,
+                            ) != PackageManager.PERMISSION_GRANTED
+                    capturePermissionCoordinator.start(
+                        needsNotificationPermission = needsNotificationPermission,
+                        requestNotificationPermission = {
+                                notificationPermissionLauncher.launch(
+                                    POST_NOTIFICATIONS_PERMISSION,
+                                )
+                        },
+                    )
+                }
+                val recordAudioPermissionLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.RequestPermission(),
+                ) { isGranted ->
+                    Log.i(TAG, "RECORD_AUDIO 权限结果：$isGranted")
+                    startProjectionFlow(playbackAudioPermissionGranted = isGranted)
                 }
 
                 when (metricsDemoPage) {
@@ -128,20 +168,19 @@ class MainActivity : ComponentActivity() {
                         },
                         onStartCapture = {
                             if (captureViewModel.requestCapturePermission()) {
-                                val needsNotificationPermission =
-                                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                                        ContextCompat.checkSelfPermission(
-                                            this@MainActivity,
-                                            Manifest.permission.POST_NOTIFICATIONS,
-                                        ) != PackageManager.PERMISSION_GRANTED
-                                capturePermissionCoordinator.start(
-                                    needsNotificationPermission = needsNotificationPermission,
-                                    requestNotificationPermission = {
-                                        notificationPermissionLauncher.launch(
-                                            Manifest.permission.POST_NOTIFICATIONS,
-                                        )
-                                    },
-                                )
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                                    !hasPlaybackAudioPermission() &&
+                                    !audioPermissionRequestedThisSession
+                                ) {
+                                    audioPermissionRequestedThisSession = true
+                                    recordAudioPermissionLauncher.launch(
+                                        Manifest.permission.RECORD_AUDIO,
+                                    )
+                                } else {
+                                    startProjectionFlow(
+                                        playbackAudioPermissionGranted = hasPlaybackAudioPermission(),
+                                    )
+                                }
                             }
                         },
                         onStopCapture = {
@@ -171,10 +210,24 @@ class MainActivity : ComponentActivity() {
         projectionManager: MediaProjectionManager,
     ): Intent {
         Log.i(TAG, "申请系统录屏授权")
-        return projectionManager.createScreenCaptureIntent()
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            projectionManager.createScreenCaptureIntent(
+                MediaProjectionConfig.createConfigForDefaultDisplay(),
+            )
+        } else {
+            projectionManager.createScreenCaptureIntent()
+        }
     }
+
+    private fun hasPlaybackAudioPermission(): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.RECORD_AUDIO,
+            ) == PackageManager.PERMISSION_GRANTED
 
     private companion object {
         const val TAG = "ScreenCapture"
+        const val POST_NOTIFICATIONS_PERMISSION = "android.permission.POST_NOTIFICATIONS"
     }
 }

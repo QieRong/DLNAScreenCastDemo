@@ -139,6 +139,26 @@ class LocalStreamServerTest {
         }
     }
 
+    @Test
+    fun publish_dropsOversizedReplayWindowInsteadOfClosingNewClient() {
+        LocalStreamServer(port = 0, bindAddress = InetAddress.getLoopbackAddress()).use { server ->
+            val port = server.start()
+            server.publish(byteArrayOf(0x47, 0x00), replayOnConnect = true)
+            repeat(600) { index ->
+                server.publish(byteArrayOf(0x47, index.toByte()))
+            }
+
+            Socket(InetAddress.getLoopbackAddress(), port).use { client ->
+                client.soTimeout = SOCKET_TIMEOUT_MS
+                client.writeRequest("GET /live.ts HTTP/1.1")
+
+                assertTrue(client.readHeader().startsWith("HTTP/1.1 200 OK\r\n"))
+                client.soTimeout = SHORT_SOCKET_TIMEOUT_MS
+                assertTrue(runCatching { client.getInputStream().read() }.isFailure)
+            }
+        }
+    }
+
     private fun Socket.writeRequest(requestLine: String) {
         getOutputStream().apply {
             write("$requestLine\r\nHost: localhost\r\n\r\n".toByteArray(StandardCharsets.US_ASCII))

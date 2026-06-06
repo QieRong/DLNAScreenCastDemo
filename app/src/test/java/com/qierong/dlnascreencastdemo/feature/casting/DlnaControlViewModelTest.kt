@@ -65,19 +65,61 @@ class DlnaControlViewModelTest {
     }
 
     @Test
-    fun sendToRenderer_setsUriThenPlays() = runTest {
+    fun sendToRenderer_stopsExistingPlaybackThenSetsUriAndPlays() = runTest {
         val controller = FakeController()
         val viewModel = DlnaControlViewModel(
             controller = controller,
             dispatcher = StandardTestDispatcher(testScheduler),
+            playbackNonceProvider = { "nonce-1" },
         )
         viewModel.selectDevice(device())
 
         viewModel.sendToRenderer(capturingState())
         advanceUntilIdle()
 
-        assertEquals(listOf("setUri", "play"), controller.calls)
+        assertEquals(listOf("stop", "setUri", "play"), controller.calls)
+        assertEquals("http://192.168.1.8:8080/live.ts?dlna=nonce-1", controller.streamUrls.single())
         assertIsInstance<DlnaControlStatus.Playing>(viewModel.uiState.value.status)
+    }
+
+    @Test
+    fun sendToRenderer_continuesWhenBestEffortStopFails() = runTest {
+        val controller = FakeController(
+            stopResult = AvTransportResult.Failure(
+                stage = AvTransportStage.Stop,
+                summary = "Renderer 当前未播放",
+                httpStatusCode = 500,
+            ),
+        )
+        val viewModel = DlnaControlViewModel(
+            controller = controller,
+            dispatcher = StandardTestDispatcher(testScheduler),
+            playbackNonceProvider = { "nonce-1" },
+        )
+        viewModel.selectDevice(device())
+
+        viewModel.sendToRenderer(capturingState())
+        advanceUntilIdle()
+
+        assertEquals(listOf("stop", "setUri", "play"), controller.calls)
+        assertEquals("http://192.168.1.8:8080/live.ts?dlna=nonce-1", controller.streamUrls.single())
+        assertIsInstance<DlnaControlStatus.Playing>(viewModel.uiState.value.status)
+    }
+
+    @Test
+    fun sendToRenderer_appendsNonceToExistingQueryString() = runTest {
+        val controller = FakeController()
+        val viewModel = DlnaControlViewModel(
+            controller = controller,
+            dispatcher = StandardTestDispatcher(testScheduler),
+            playbackNonceProvider = { "nonce-2" },
+        )
+        viewModel.selectDevice(device())
+
+        viewModel.sendToRenderer(capturingState(streamUrl = "http://192.168.1.8:8080/live.ts?x=1"))
+        advanceUntilIdle()
+
+        assertEquals("http://192.168.1.8:8080/live.ts?x=1&dlna=nonce-2", controller.streamUrls.single())
     }
 
     @Test
@@ -99,14 +141,18 @@ class DlnaControlViewModelTest {
         assertEquals(listOf("pause", "stop"), controller.calls)
     }
 
-    private class FakeController : AvTransportController {
+    private class FakeController(
+        private val stopResult: AvTransportResult = AvTransportResult.Success(AvTransportStage.Stop, 200),
+    ) : AvTransportController {
         val calls = mutableListOf<String>()
+        val streamUrls = mutableListOf<String>()
 
         override suspend fun setAvTransportUri(
             controlUrl: String,
             streamUrl: String,
         ): AvTransportResult {
             calls += "setUri"
+            streamUrls += streamUrl
             return AvTransportResult.Success(AvTransportStage.SetUri, 200)
         }
 
@@ -122,7 +168,7 @@ class DlnaControlViewModelTest {
 
         override suspend fun stop(controlUrl: String): AvTransportResult {
             calls += "stop"
-            return AvTransportResult.Success(AvTransportStage.Stop, 200)
+            return stopResult
         }
     }
 

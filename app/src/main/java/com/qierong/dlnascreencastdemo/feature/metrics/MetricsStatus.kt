@@ -19,6 +19,7 @@ data class MetricStatusItem(
 
 fun buildMetricStatusItems(captureState: CaptureState): List<MetricStatusItem> {
     val encoderConfig = captureState.activeEncoderConfig()
+    val audioStatus = captureState.activeAudioStatus()
     return listOf(
         MetricStatusItem(
             title = "延迟",
@@ -45,9 +46,10 @@ fun buildMetricStatusItems(captureState: CaptureState): List<MetricStatusItem> {
         MetricStatusItem(
             title = "音频",
             target = "AAC 128Kbps",
-            current = "默认 video-only；测试音运行时已禁用",
-            evidence = "PR9 曾用 App 内 1kHz 测试音验证 AAC 封装链路；" +
-                "PR13 起默认不输出测试音。真实系统播放音待 PR14 实现和验证。",
+            current = audioStatus?.label ?: "待开始采集",
+            evidence = audioStatus?.detail
+                ?: "PR14 使用 AudioPlaybackCapture 采集真实系统播放音；" +
+                    "ffprobe audio=aac 只证明音轨存在，logcat PCM peak/RMS + first AAC 才证明捕获并完成编码，PC/Kodi/ffplay 听到目标 App 声音才证明真实播放音链路跑通。",
         ),
     )
 }
@@ -55,6 +57,18 @@ fun buildMetricStatusItems(captureState: CaptureState): List<MetricStatusItem> {
 private fun CaptureState.activeEncoderConfig(): ActiveEncoderConfig? = when (this) {
     is CaptureState.Capturing -> sessionInfo.encoderConfig
     is CaptureState.Reconfiguring -> sessionInfo.encoderConfig
+    CaptureState.Idle,
+    CaptureState.PermissionDenied,
+    CaptureState.RequestingPermission,
+    CaptureState.Starting,
+    CaptureState.Stopping,
+    is CaptureState.Error,
+    -> null
+}
+
+private fun CaptureState.activeAudioStatus() = when (this) {
+    is CaptureState.Capturing -> sessionInfo.audioStatus
+    is CaptureState.Reconfiguring -> sessionInfo.audioStatus
     CaptureState.Idle,
     CaptureState.PermissionDenied,
     CaptureState.RequestingPermission,

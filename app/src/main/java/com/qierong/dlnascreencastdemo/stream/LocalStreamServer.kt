@@ -136,7 +136,9 @@ class LocalStreamServer(
                 replayBytes = 0
             }
             if (replayChunks.isEmpty() && !replayOnConnect) return
-            if (replayBytes + tsChunk.size > MAX_REPLAY_BYTES) {
+            if (replayBytes + tsChunk.size > MAX_REPLAY_BYTES ||
+                replayChunks.size >= MAX_REPLAY_CHUNKS
+            ) {
                 replayChunks.clear()
                 replayBytes = 0
                 return
@@ -159,5 +161,6 @@ class LocalStreamServer(
         const val DEFAULT_PORT = 8080
         private const val MAX_PORT = 65_535
         private const val MAX_REPLAY_BYTES = 8 * 1024 * 1024
+        private const val MAX_REPLAY_CHUNKS = 384
     }
 }

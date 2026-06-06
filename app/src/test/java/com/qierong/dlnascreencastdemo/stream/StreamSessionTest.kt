@@ -5,7 +5,6 @@ import java.io.InputStream
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
-import java.net.SocketTimeoutException
 import java.nio.charset.StandardCharsets
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
@@ -60,63 +59,72 @@ class StreamSessionTest {
     // ─── 新增：时序与错误处理验证 ─────────────────────────────────────────────
 
     /**
-     * 验证 onReady 被调用时，HTTP 响应头已写出到输出流。
+     * 验证 onReady 被调用时，session 已可接收排队数据。
      *
-     * 正确时序：写头 → startWriting → onReady。
-     * 若 onReady 在写头之前调用，headerWrittenBeforeOnReady 会是 false，测试失败。
+     * 正确时序：onReady 注册 session → 写头 → startWriting。
+     * 这样 LocalStreamServer 在客户端刚读到 header 后立即 publish 时不会丢首包。
      */
     @Test
-    fun open_writesHttpHeaderBeforeCallingOnReady() {
+    fun open_allowsQueueingChunkInOnReadyBeforeHeaderIsVisible() {
         socketPair().use { pair ->
             pair.client.writeRequest("GET /live.ts HTTP/1.1")
 
-            var headerWrittenBeforeOnReady = false
+            var writeSucceededInOnReady = false
 
-            // onReady 被调用时，尝试从客户端读取响应头
-            // 若此时头已写出，readHeader 能立刻完成；否则会在 SOCKET_TIMEOUT_MS 内超时
-            val session = StreamSession.open(pair.server) { _ ->
-                // 在 onReady 回调内，读取客户端侧是否已能看到 HTTP 头
-                // 设置一个短超时来检测头是否已到达
-                val saved = pair.client.soTimeout
-                pair.client.soTimeout = 500
-                try {
-                    val header = pair.client.readHeader()
-                    headerWrittenBeforeOnReady = header.startsWith("HTTP/1.1 200 OK")
-                } catch (_: SocketTimeoutException) {
-                    headerWrittenBeforeOnReady = false
-                } finally {
-                    pair.client.soTimeout = saved
-                }
+            val session = StreamSession.open(pair.server) { ready ->
+                writeSucceededInOnReady = ready.write(byteArrayOf(0x47, 0x66))
             }
 
-            assertTrue("onReady 调用时 HTTP 响应头应已写出", headerWrittenBeforeOnReady)
+            assertTrue("onReady 调用时 session.write() 应可排队", writeSucceededInOnReady)
+            assertTrue(pair.client.readHeader().startsWith("HTTP/1.1 200 OK\r\n"))
+            assertArrayEquals(byteArrayOf(0x47, 0x66), pair.client.readExactly(2))
             session?.close()
         }
     }
 
+    @Test
+    fun open_acceptsLiveTsRequestWithQueryString() {
+        socketPair().use { pair ->
+            pair.client.writeRequest("GET /live.ts?dlna=123 HTTP/1.1")
+
+            val session = StreamSession.open(pair.server)
+
+            assertTrue(pair.client.readHeader().startsWith("HTTP/1.1 200 OK\r\n"))
+            assertTrue(session!!.write(byteArrayOf(0x47, 0x11)))
+            assertArrayEquals(byteArrayOf(0x47, 0x11), pair.client.readExactly(2))
+            session.close()
+        }
+    }
+
+    @Test
+    fun open_acceptsHeadProbeWithoutCreatingSession() {
+        socketPair().use { pair ->
+            pair.client.writeRequest("HEAD /live.ts?dlna=123 HTTP/1.1")
+
+            val session = StreamSession.open(pair.server)
+
+            assertNull(session)
+            assertTrue(pair.client.readHeader().startsWith("HTTP/1.1 200 OK\r\n"))
+            assertTrue(pair.client.getInputStream().read() < 0)
+        }
+    }
+
     /**
-     * 验证 onReady 被调用时，writer 线程已经启动（session.write() 不应返回 false）。
+     * 验证 writer 在响应头写出后启动，避免 TS 数据跑到 HTTP header 前面。
      *
-     * 若 writer 在 onReady 之后启动，session 加入活跃集合后立即 write() 可能在
-     * writerThread 启动前执行，存在数据丢失风险。
+     * onReady 中排队的数据必须在完整 HTTP 头之后到达客户端。
      */
     @Test
-    fun open_startsWriterBeforeCallingOnReady() {
+    fun open_writesHeaderBeforeQueuedTsBytes() {
         socketPair().use { pair ->
             pair.client.writeRequest("GET /live.ts HTTP/1.1")
-            // 在 onReady 时预先消费掉 HTTP 头，避免 readHeader 阻塞
-            pair.client.soTimeout = SOCKET_TIMEOUT_MS
 
-            var writeSucceededInOnReady = false
-
-            val session = StreamSession.open(pair.server) { s ->
-                // 消费响应头
-                pair.client.readHeader()
-                // writer 应已启动，write 应返回 true
-                writeSucceededInOnReady = s.write(byteArrayOf(0x47))
+            val session = StreamSession.open(pair.server) { ready ->
+                ready.write(byteArrayOf(0x47, 0x77))
             }
 
-            assertTrue("onReady 调用时 writer 应已启动，write() 应返回 true", writeSucceededInOnReady)
+            assertTrue(pair.client.readHeader().startsWith("HTTP/1.1 200 OK\r\n"))
+            assertArrayEquals(byteArrayOf(0x47, 0x77), pair.client.readExactly(2))
             session?.close()
         }
     }

@@ -57,7 +57,7 @@ class StreamSession private constructor(
     companion object {
         private const val TAG = "StreamSession"
         private const val LIVE_PATH = "/live.ts"
-        private const val MAX_PENDING_CHUNKS = 64
+        private const val MAX_PENDING_CHUNKS = 512
         private const val MAX_HEADER_LINES = 64
         private const val MAX_LINE_BYTES = 4_096
         private const val REQUEST_TIMEOUT_MS = 2_000
@@ -68,15 +68,15 @@ class StreamSession private constructor(
          * 从 [socket] 读取 HTTP 请求并握手。
          *
          * 握手成功时：
-         * 1. 写出 HTTP 200 响应头（含 Content-Type: video/mp2t）
-         * 2. 清除 soTimeout，防止流传输期间超时断连
-         * 3. 启动后台写线程
-         * 4. 调用 [onReady]，将 session 加入活跃集合
+         * 1. 调用 [onReady]，将 session 加入活跃集合并允许 replay 先排队
+         * 2. 写出 HTTP 200 响应头（含 Content-Type: video/mp2t）
+         * 3. 清除 soTimeout，防止流传输期间超时断连
+         * 4. 启动后台写线程
          *
          * 若握手失败（任何 IOException 或请求格式错误），返回 null 并关闭 socket。
          *
          * @param socket 已建立的 TCP 连接
-         * @param onReady 握手 + 响应头写出 + writer 启动完成后的回调
+         * @param onReady 请求校验完成、响应头写出前的回调
          * @return 握手成功时的 [StreamSession]，失败时为 null
          */
         fun open(
@@ -96,36 +96,33 @@ class StreamSession private constructor(
                     return reject(socket, "400 Bad Request", remoteAddr, "请求头解析失败")
                 }
 
-                // 记录请求行，方便 logcat 确认请求路径
-                Log.d(TAG, "[$remoteAddr] 请求行：$requestLine")
-
                 val parts = requestLine.split(' ')
                 when {
                     parts.size != 3 || !parts[2].startsWith("HTTP/") ->
                         reject(socket, "400 Bad Request", remoteAddr, "请求行格式错误：$requestLine")
 
-                    parts[0] != "GET" ->
+                    parts[0] != "GET" && parts[0] != "HEAD" ->
                         reject(socket, "405 Method Not Allowed", remoteAddr, "不支持的方法：${parts[0]}")
 
-                    parts[1] != LIVE_PATH ->
+                    parts[1].substringBefore('?') != LIVE_PATH ->
                         reject(socket, "404 Not Found", remoteAddr, "未知路径：${parts[1]}")
+
+                    parts[0] == "HEAD" -> {
+                        Log.d(TAG, "[$remoteAddr] HEAD 探测：$requestLine")
+                        writeOkHeader(socket)
+                        runCatching(socket::close)
+                        null
+                    }
 
                     else -> {
                         val session = StreamSession(socket)
+                        Log.d(TAG, "[$remoteAddr] 请求行：$requestLine")
 
-                        // ① 先写 HTTP 响应头，保证客户端能收到 200 OK
-                        socket.getOutputStream().apply {
-                            write(
-                                (
-                                    "HTTP/1.1 200 OK\r\n" +
-                                        "Content-Type: video/mp2t\r\n" +
-                                        "Cache-Control: no-store\r\n" +
-                                        "Connection: close\r\n" +
-                                        "\r\n"
-                                    ).toByteArray(ASCII),
-                            )
-                            flush()
-                        }
+                        // 先注册 session，但 writer 暂不启动，避免响应头与 TS 数据交错。
+                        onReady(session)
+
+                        // ① 写 HTTP 响应头，保证客户端能收到 200 OK
+                        writeOkHeader(socket)
 
                         // ② 清除读超时，流传输期间不设 soTimeout
                         socket.soTimeout = 0
@@ -133,14 +130,12 @@ class StreamSession private constructor(
                         // ③ 启动后台写线程，准备好接收 TS 数据
                         session.startWriting()
 
-                        // ④ 最后加入活跃集合，触发首包 replay
-                        onReady(session)
-
                         Log.i(TAG, "[$remoteAddr] 握手成功，开始推流")
                         session
                     }
                 }
             } catch (exception: IOException) {
+                runCatching(socket::close)
                 // IOException 不静默吞掉，记录实际异常类型方便定位根因
                 // 最常见路径：SocketTimeoutException（握手期间超时）、连接重置等
                 Log.w(
@@ -148,7 +143,6 @@ class StreamSession private constructor(
                     "HTTP 握手失败（${runCatching { socket.remoteSocketAddress }.getOrNull()}）：" +
                         "${exception::class.simpleName} — ${exception.message}",
                 )
-                runCatching(socket::close)
                 null
             }
         }
@@ -183,6 +177,21 @@ class StreamSession private constructor(
             }
             runCatching(socket::close)
             return null
+        }
+
+        private fun writeOkHeader(socket: Socket) {
+            socket.getOutputStream().apply {
+                write(
+                    (
+                        "HTTP/1.1 200 OK\r\n" +
+                            "Content-Type: video/mp2t\r\n" +
+                            "Cache-Control: no-store\r\n" +
+                            "Connection: close\r\n" +
+                            "\r\n"
+                        ).toByteArray(ASCII),
+                )
+                flush()
+            }
         }
 
         /**

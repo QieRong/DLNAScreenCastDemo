@@ -9,6 +9,8 @@ class MpegTsStreamPipeline(
     private var normalizer = AvcAnnexBNormalizer()
     private var muxer = MpegTsMuxer(includeAudio = includeAudio)
     private var waitingForKeyFrame = true
+    private var videoBaseTimeUs: Long? = null
+    private var audioBaseTimeUs: Long? = null
 
     @Synchronized
     override fun onOutputFormat(csd0: ByteArray?, csd1: ByteArray?) {
@@ -28,7 +30,14 @@ class MpegTsStreamPipeline(
     ) {
         val annexB = normalizer.normalizeForStreaming(data, isKeyFrame) ?: return
         if (waitingForKeyFrame && !isKeyFrame) return
-        publish(muxer.muxVideoAccessUnit(annexB, presentationTimeUs, isKeyFrame), isKeyFrame)
+        publish(
+            muxer.muxVideoAccessUnit(
+                annexB = annexB,
+                presentationTimeUs = normalizeVideoTime(presentationTimeUs),
+                isKeyFrame = isKeyFrame,
+            ),
+            isKeyFrame,
+        )
         waitingForKeyFrame = false
     }
 
@@ -42,11 +51,12 @@ class MpegTsStreamPipeline(
      * @param presentationTimeUs 以微秒为单位的 PTS
      */
     @Synchronized
-    fun onAudioAccessUnit(data: ByteArray, presentationTimeUs: Long) {
-        if (!includeAudio) return
-        if (waitingForKeyFrame) return  // 等待视频关键帧后才开始推送，保持播放端同步
-        val tsPackets = muxer.muxAudioAccessUnit(data, presentationTimeUs)
+    fun onAudioAccessUnit(data: ByteArray, presentationTimeUs: Long): Boolean {
+        if (!includeAudio) return false
+        if (waitingForKeyFrame) return false  // 等待视频关键帧后才开始推送，保持播放端同步
+        val tsPackets = muxer.muxAudioAccessUnit(data, normalizeAudioTime(presentationTimeUs))
         publish(tsPackets, false)
+        return true
     }
 
     @Synchronized
@@ -54,5 +64,30 @@ class MpegTsStreamPipeline(
         normalizer = AvcAnnexBNormalizer()
         muxer = MpegTsMuxer(includeAudio = includeAudio)
         waitingForKeyFrame = true
+        videoBaseTimeUs = null
+        audioBaseTimeUs = null
+    }
+
+    private fun normalizeVideoTime(presentationTimeUs: Long): Long =
+        normalizeStreamTime(
+            presentationTimeUs = presentationTimeUs,
+            currentBase = videoBaseTimeUs,
+            updateBase = { videoBaseTimeUs = it },
+        )
+
+    private fun normalizeAudioTime(presentationTimeUs: Long): Long =
+        normalizeStreamTime(
+            presentationTimeUs = presentationTimeUs,
+            currentBase = audioBaseTimeUs,
+            updateBase = { audioBaseTimeUs = it },
+        )
+
+    private fun normalizeStreamTime(
+        presentationTimeUs: Long,
+        currentBase: Long?,
+        updateBase: (Long) -> Unit,
+    ): Long {
+        val base = currentBase ?: presentationTimeUs.also(updateBase)
+        return (presentationTimeUs - base).coerceAtLeast(0L)
     }
 }

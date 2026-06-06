@@ -21,6 +21,9 @@ import kotlinx.coroutines.launch
 class DlnaControlViewModel(
     private val controller: AvTransportController = AvTransportClient(),
     private val dispatcher: CoroutineDispatcher = Dispatchers.Main,
+    private val playbackNonceProvider: () -> String = {
+        System.currentTimeMillis().toString()
+    },
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(DlnaControlUiState())
     val uiState: StateFlow<DlnaControlUiState> = _uiState.asStateFlow()
@@ -44,10 +47,12 @@ class DlnaControlViewModel(
                         "ip=${target.device.ipAddress} controlURL=${target.controlUrl} " +
                         "streamUrl=${target.streamUrl}",
                 )
+                bestEffortStopBeforeSetUri(target.controlUrl)
                 _uiState.update {
                     it.copy(status = DlnaControlStatus.InProgress(AvTransportStage.SetUri))
                 }
-                val setUriResult = controller.setAvTransportUri(target.controlUrl, target.streamUrl)
+                val playbackUrl = target.streamUrl.withPlaybackNonce(playbackNonceProvider())
+                val setUriResult = controller.setAvTransportUri(target.controlUrl, playbackUrl)
                 if (setUriResult is AvTransportResult.Failure) {
                     _uiState.update { it.copy(status = setUriResult.toFailureStatus()) }
                     return@launch
@@ -77,6 +82,24 @@ class DlnaControlViewModel(
                     )
                 }
             }
+        }
+    }
+
+    private suspend fun bestEffortStopBeforeSetUri(controlUrl: String) {
+        logInfo("发送新流前先执行 best-effort Stop，避免 Renderer 继续播放旧 live.ts")
+        try {
+            when (val result = controller.stop(controlUrl)) {
+                is AvTransportResult.Success -> {
+                    logInfo("best-effort Stop 成功：HTTP=${result.httpStatusCode}")
+                }
+                is AvTransportResult.Failure -> {
+                    logWarn("best-effort Stop 失败但继续 SetURI：${result.summary}")
+                }
+            }
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (exception: Exception) {
+            logWarn("best-effort Stop 异常但继续 SetURI：${exception.message ?: exception::class.java.simpleName}")
         }
     }
 
@@ -185,6 +208,13 @@ class DlnaControlViewModel(
     private fun logInfo(message: String) {
         runCatching { Log.i(TAG, message) }
     }
+
+    private fun logWarn(message: String) {
+        runCatching { Log.w(TAG, message) }
+    }
+
+    private fun String.withPlaybackNonce(nonce: String): String =
+        this + if (contains('?')) "&dlna=$nonce" else "?dlna=$nonce"
 
     private companion object {
         const val TAG = "DlnaControl"
