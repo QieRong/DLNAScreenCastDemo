@@ -1,93 +1,129 @@
 package com.qierong.dlnascreencastdemo.stream
 
+import android.util.Log
 import com.qierong.dlnascreencastdemo.encoder.EncodedVideoOutputSink
 
 class MpegTsStreamPipeline(
     private val includeAudio: Boolean = false,
     private val publish: (ByteArray, Boolean) -> Unit,
 ) : EncodedVideoOutputSink {
+    private val pipelineLock = Any()
+    
     private var normalizer = AvcAnnexBNormalizer()
     private var muxer = MpegTsMuxer(includeAudio = includeAudio)
     private var waitingForKeyFrame = true
-    private var videoBaseTimeUs: Long? = null
-    private var audioBaseTimeUs: Long? = null
+    
+    private var globalBaseTimeUs: Long = -1L
+    private var lastVideoPtsUs: Long = -1L
+    private var lastAudioPtsUs: Long = -1L
+    
+    private var clampLogCount = 0
+    private var dropLogCount = 0
+    private var lastLogTimeMs = 0L
 
-    @Synchronized
     override fun onOutputFormat(csd0: ByteArray?, csd1: ByteArray?) {
-        normalizer.updateCodecSpecificData(csd0, csd1)
+        synchronized(pipelineLock) {
+            normalizer.updateCodecSpecificData(csd0, csd1)
+        }
     }
 
-    @Synchronized
     override fun onCodecConfig(data: ByteArray) {
-        normalizer.updateCodecSpecificData(data, null)
+        synchronized(pipelineLock) {
+            normalizer.updateCodecSpecificData(data, null)
+        }
     }
 
-    @Synchronized
     override fun onAccessUnit(
         data: ByteArray,
         presentationTimeUs: Long,
         isKeyFrame: Boolean,
     ) {
-        val annexB = normalizer.normalizeForStreaming(data, isKeyFrame) ?: return
-        if (waitingForKeyFrame && !isKeyFrame) return
-        publish(
-            muxer.muxVideoAccessUnit(
+        val tsPackets = synchronized(pipelineLock) {
+            val annexB = normalizer.normalizeForStreaming(data, isKeyFrame) ?: return@synchronized null
+            if (waitingForKeyFrame && !isKeyFrame) return@synchronized null
+            
+            if (globalBaseTimeUs == -1L && isKeyFrame) {
+                globalBaseTimeUs = presentationTimeUs
+            }
+            
+            if (globalBaseTimeUs == -1L) return@synchronized null // Should not happen due to above check
+            
+            val relativePts = (presentationTimeUs - globalBaseTimeUs).coerceAtLeast(0L)
+            val monotonicPts = ensureMonotonicUs(relativePts, lastVideoPtsUs, "Video")
+            if (monotonicPts == -1L) return@synchronized null // Drop frame
+            
+            lastVideoPtsUs = monotonicPts
+            
+            val packets = muxer.muxVideoAccessUnit(
                 annexB = annexB,
-                presentationTimeUs = normalizeVideoTime(presentationTimeUs),
+                presentationTimeUs = monotonicPts,
                 isKeyFrame = isKeyFrame,
-            ),
-            isKeyFrame,
-        )
-        waitingForKeyFrame = false
+            )
+            waitingForKeyFrame = false
+            packets
+        }
+        
+        if (tsPackets != null) {
+            publish(tsPackets, isKeyFrame)
+        }
     }
 
-    /**
-     * 将一帧 ADTS 封装的 AAC 音频送入 TS 封装并发布。
-     *
-     * 音频帧与视频帧独立送入，本阶段不做复杂的音视频重排序队列。
-     * 即使音频异常也不会影响视频 pipeline：异常由调用方捕获处理。
-     *
-     * @param data ADTS 头 + raw AAC ES 的完整帧
-     * @param presentationTimeUs 以微秒为单位的 PTS
-     */
-    @Synchronized
     fun onAudioAccessUnit(data: ByteArray, presentationTimeUs: Long): Boolean {
         if (!includeAudio) return false
-        if (waitingForKeyFrame) return false  // 等待视频关键帧后才开始推送，保持播放端同步
-        val tsPackets = muxer.muxAudioAccessUnit(data, normalizeAudioTime(presentationTimeUs))
-        publish(tsPackets, false)
-        return true
+        
+        val tsPackets = synchronized(pipelineLock) {
+            if (waitingForKeyFrame) return@synchronized null
+            if (globalBaseTimeUs == -1L) return@synchronized null // Wait for video keyframe base time
+            
+            val relativePts = (presentationTimeUs - globalBaseTimeUs).coerceAtLeast(0L)
+            val monotonicPts = ensureMonotonicUs(relativePts, lastAudioPtsUs, "Audio")
+            if (monotonicPts == -1L) return@synchronized null // Drop frame
+            
+            lastAudioPtsUs = monotonicPts
+            muxer.muxAudioAccessUnit(data, monotonicPts)
+        }
+        
+        if (tsPackets != null) {
+            publish(tsPackets, false)
+            return true
+        }
+        return false
     }
 
-    @Synchronized
     fun reset() {
-        normalizer = AvcAnnexBNormalizer()
-        muxer = MpegTsMuxer(includeAudio = includeAudio)
-        waitingForKeyFrame = true
-        videoBaseTimeUs = null
-        audioBaseTimeUs = null
+        synchronized(pipelineLock) {
+            normalizer = AvcAnnexBNormalizer()
+            muxer = MpegTsMuxer(includeAudio = includeAudio)
+            waitingForKeyFrame = true
+            globalBaseTimeUs = -1L
+            lastVideoPtsUs = -1L
+            lastAudioPtsUs = -1L
+            clampLogCount = 0
+            dropLogCount = 0
+        }
     }
 
-    private fun normalizeVideoTime(presentationTimeUs: Long): Long =
-        normalizeStreamTime(
-            presentationTimeUs = presentationTimeUs,
-            currentBase = videoBaseTimeUs,
-            updateBase = { videoBaseTimeUs = it },
-        )
-
-    private fun normalizeAudioTime(presentationTimeUs: Long): Long =
-        normalizeStreamTime(
-            presentationTimeUs = presentationTimeUs,
-            currentBase = audioBaseTimeUs,
-            updateBase = { audioBaseTimeUs = it },
-        )
-
-    private fun normalizeStreamTime(
-        presentationTimeUs: Long,
-        currentBase: Long?,
-        updateBase: (Long) -> Unit,
-    ): Long {
-        val base = currentBase ?: presentationTimeUs.also(updateBase)
-        return (presentationTimeUs - base).coerceAtLeast(0L)
+    internal fun ensureMonotonicUs(currentPtsUs: Long, lastPtsUs: Long, track: String): Long {
+        if (lastPtsUs == -1L) return currentPtsUs
+        if (currentPtsUs > lastPtsUs) return currentPtsUs
+        
+        val diff = lastPtsUs - currentPtsUs
+        val now = System.currentTimeMillis()
+        
+        if (diff > 1_000_000L) { // > 1 second jump
+            if (now - lastLogTimeMs > 5000 || dropLogCount < 5) {
+                Log.w("StreamPipeline", "[$track] Large PTS backwards jump detected. Dropping frame. Diff: ${diff}us")
+                lastLogTimeMs = now
+                dropLogCount++
+            }
+            return -1L
+        }
+        
+        if (now - lastLogTimeMs > 5000 || clampLogCount < 5) {
+            Log.w("StreamPipeline", "[$track] PTS non-monotonic (diff: ${diff}us). Clamping to lastPts + 12us.")
+            lastLogTimeMs = now
+            clampLogCount++
+        }
+        return lastPtsUs + 12L
     }
 }
