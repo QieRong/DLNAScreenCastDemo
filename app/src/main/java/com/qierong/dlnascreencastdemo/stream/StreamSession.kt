@@ -28,6 +28,9 @@ class StreamSession private constructor(
         }
     }
 
+    internal val pendingChunkCount: Int
+        get() = pendingChunks.size
+
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         pendingChunks.clear()

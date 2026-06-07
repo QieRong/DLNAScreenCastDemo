@@ -20,6 +20,16 @@ class MpegTsStreamPipeline(
     private var clampLogCount = 0
     private var dropLogCount = 0
     private var lastLogTimeMs = 0L
+    private var lastSummaryLogTimeMs = 0L
+    private var encodedVideoFrameCount = 0L
+    private var publishedVideoFrameCount = 0L
+    private var droppedVideoFrameCount = 0L
+    private var receivedAudioFrameCount = 0L
+    private var publishedAudioFrameCount = 0L
+    private var droppedAudioFrameCount = 0L
+    private var audioOffsetRejectedCount = 0L
+    private val videoPtsDeltaStats = PtsDeltaStats()
+    private val audioPtsDeltaStats = PtsDeltaStats()
 
     override fun onOutputFormat(csd0: ByteArray?, csd1: ByteArray?) {
         synchronized(pipelineLock) {
@@ -39,8 +49,15 @@ class MpegTsStreamPipeline(
         isKeyFrame: Boolean,
     ) {
         val tsPackets = synchronized(pipelineLock) {
-            val annexB = normalizer.normalizeForStreaming(data, isKeyFrame) ?: return@synchronized null
-            if (waitingForKeyFrame && !isKeyFrame) return@synchronized null
+            encodedVideoFrameCount++
+            val annexB = normalizer.normalizeForStreaming(data, isKeyFrame) ?: run {
+                droppedVideoFrameCount++
+                return@synchronized null
+            }
+            if (waitingForKeyFrame && !isKeyFrame) {
+                droppedVideoFrameCount++
+                return@synchronized null
+            }
             
             if (globalBaseTimeUs == -1L && isKeyFrame) {
                 globalBaseTimeUs = presentationTimeUs
@@ -50,9 +67,14 @@ class MpegTsStreamPipeline(
             
             val relativePts = (presentationTimeUs - globalBaseTimeUs).coerceAtLeast(0L)
             val monotonicPts = ensureMonotonicUs(relativePts, lastVideoPtsUs, "Video")
-            if (monotonicPts == -1L) return@synchronized null // Drop frame
+            if (monotonicPts == -1L) {
+                droppedVideoFrameCount++
+                return@synchronized null
+            }
             
+            videoPtsDeltaStats.record(monotonicPts, lastVideoPtsUs)
             lastVideoPtsUs = monotonicPts
+            publishedVideoFrameCount++
             
             val packets = muxer.muxVideoAccessUnit(
                 annexB = annexB,
@@ -66,27 +88,51 @@ class MpegTsStreamPipeline(
         if (tsPackets != null) {
             publish(tsPackets, isKeyFrame)
         }
+        logSummaryIfNeeded()
     }
 
     fun onAudioAccessUnit(data: ByteArray, presentationTimeUs: Long): Boolean {
         if (!includeAudio) return false
         
+        var rejectedAudioOffsetUs: Long? = null
         val tsPackets = synchronized(pipelineLock) {
-            if (waitingForKeyFrame) return@synchronized null
-            if (globalBaseTimeUs == -1L) return@synchronized null // Wait for video keyframe base time
+            receivedAudioFrameCount++
+            if (waitingForKeyFrame) {
+                droppedAudioFrameCount++
+                return@synchronized null
+            }
+            if (globalBaseTimeUs == -1L) {
+                droppedAudioFrameCount++
+                return@synchronized null
+            }
             
+            val audioOffsetUs = presentationTimeUs - globalBaseTimeUs
+            if (audioOffsetUs < -MAX_AUDIO_INITIAL_OFFSET_US) {
+                audioOffsetRejectedCount++
+                droppedAudioFrameCount++
+                rejectedAudioOffsetUs = audioOffsetUs
+                return@synchronized null
+            }
             val relativePts = (presentationTimeUs - globalBaseTimeUs).coerceAtLeast(0L)
             val monotonicPts = ensureMonotonicUs(relativePts, lastAudioPtsUs, "Audio")
-            if (monotonicPts == -1L) return@synchronized null // Drop frame
+            if (monotonicPts == -1L) {
+                droppedAudioFrameCount++
+                return@synchronized null
+            }
             
+            audioPtsDeltaStats.record(monotonicPts, lastAudioPtsUs)
             lastAudioPtsUs = monotonicPts
+            publishedAudioFrameCount++
             muxer.muxAudioAccessUnit(data, monotonicPts)
         }
         
+        rejectedAudioOffsetUs?.let(::logAudioOffsetRejection)
         if (tsPackets != null) {
             publish(tsPackets, false)
+            logSummaryIfNeeded()
             return true
         }
+        logSummaryIfNeeded()
         return false
     }
 
@@ -100,6 +146,16 @@ class MpegTsStreamPipeline(
             lastAudioPtsUs = -1L
             clampLogCount = 0
             dropLogCount = 0
+            lastSummaryLogTimeMs = 0L
+            encodedVideoFrameCount = 0L
+            publishedVideoFrameCount = 0L
+            droppedVideoFrameCount = 0L
+            receivedAudioFrameCount = 0L
+            publishedAudioFrameCount = 0L
+            droppedAudioFrameCount = 0L
+            audioOffsetRejectedCount = 0L
+            videoPtsDeltaStats.reset()
+            audioPtsDeltaStats.reset()
         }
     }
 
@@ -112,7 +168,7 @@ class MpegTsStreamPipeline(
         
         if (diff > 1_000_000L) { // > 1 second jump
             if (now - lastLogTimeMs > 5000 || dropLogCount < 5) {
-                Log.w("StreamPipeline", "[$track] Large PTS backwards jump detected. Dropping frame. Diff: ${diff}us")
+                Log.w(TAG, "[$track] Large PTS backwards jump detected. Dropping frame. Diff: ${diff}us")
                 lastLogTimeMs = now
                 dropLogCount++
             }
@@ -120,10 +176,68 @@ class MpegTsStreamPipeline(
         }
         
         if (now - lastLogTimeMs > 5000 || clampLogCount < 5) {
-            Log.w("StreamPipeline", "[$track] PTS non-monotonic (diff: ${diff}us). Clamping to lastPts + 12us.")
+            Log.w(TAG, "[$track] PTS non-monotonic (diff: ${diff}us). Clamping to lastPts + 12us.")
             lastLogTimeMs = now
             clampLogCount++
         }
         return lastPtsUs + 12L
+    }
+
+    internal fun diagnosticSnapshot(): StreamPipelineDiagnosticSnapshot =
+        synchronized(pipelineLock) {
+            diagnosticSnapshotLocked()
+        }
+
+    private fun logSummaryIfNeeded() {
+        val snapshot = synchronized(pipelineLock) {
+            val now = System.currentTimeMillis()
+            if (now - lastSummaryLogTimeMs < SUMMARY_LOG_INTERVAL_MS) {
+                null
+            } else {
+                lastSummaryLogTimeMs = now
+                diagnosticSnapshotLocked()
+            }
+        } ?: return
+        Log.i(TAG, "pipeline diagnostics: ${snapshot.toLogLine()}")
+    }
+
+    private fun logAudioOffsetRejection(audioOffsetUs: Long) {
+        val now = System.currentTimeMillis()
+        if (now - lastLogTimeMs > SUMMARY_LOG_INTERVAL_MS || audioOffsetRejectedCount <= INITIAL_LOG_LIMIT) {
+            Log.w(
+                TAG,
+                "[Audio] initial offset rejected: ${audioOffsetUs}us, " +
+                    "limit=${MAX_AUDIO_INITIAL_OFFSET_US}us",
+            )
+            lastLogTimeMs = now
+        }
+    }
+
+    private fun diagnosticSnapshotLocked(): StreamPipelineDiagnosticSnapshot =
+        StreamPipelineDiagnosticSnapshot(
+            includeAudio = includeAudio,
+            waitingForKeyFrame = waitingForKeyFrame,
+            encodedVideoFrameCount = encodedVideoFrameCount,
+            publishedVideoFrameCount = publishedVideoFrameCount,
+            droppedVideoFrameCount = droppedVideoFrameCount,
+            receivedAudioFrameCount = receivedAudioFrameCount,
+            publishedAudioFrameCount = publishedAudioFrameCount,
+            droppedAudioFrameCount = droppedAudioFrameCount,
+            audioOffsetRejectedCount = audioOffsetRejectedCount,
+            videoPtsDeltaUsMin = videoPtsDeltaStats.minOrNull(),
+            videoPtsDeltaUsMax = videoPtsDeltaStats.maxOrNull(),
+            videoPtsDeltaUsAvg = videoPtsDeltaStats.averageOrNull(),
+            audioPtsDeltaUsMin = audioPtsDeltaStats.minOrNull(),
+            audioPtsDeltaUsMax = audioPtsDeltaStats.maxOrNull(),
+            audioPtsDeltaUsAvg = audioPtsDeltaStats.averageOrNull(),
+            lastVideoPtsUs = lastVideoPtsUs,
+            lastAudioPtsUs = lastAudioPtsUs,
+        )
+
+    companion object {
+        private const val TAG = "StreamPipeline"
+        private const val SUMMARY_LOG_INTERVAL_MS = 5_000L
+        private const val INITIAL_LOG_LIMIT = 5
+        private const val MAX_AUDIO_INITIAL_OFFSET_US = 2_000_000L
     }
 }

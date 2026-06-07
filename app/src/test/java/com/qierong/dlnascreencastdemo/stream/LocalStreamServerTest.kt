@@ -140,6 +140,25 @@ class LocalStreamServerTest {
     }
 
     @Test
+    fun diagnosticSnapshot_reportsPublishAndReplayState() {
+        LocalStreamServer(port = 0, bindAddress = InetAddress.getLoopbackAddress()).use { server ->
+            server.start()
+            server.publish(byteArrayOf(0x47, 0x11), replayOnConnect = true)
+            server.publish(byteArrayOf(0x47, 0x22))
+
+            val snapshot = server.diagnosticSnapshot()
+
+            assertTrue(snapshot.isRunning)
+            assertTrue(snapshot.publishedChunkCount == 2L)
+            assertTrue(snapshot.currentSessionCount == 0)
+            assertTrue(snapshot.pendingPacketCount == 0)
+            assertTrue(snapshot.sessionWriteFailureCount == 0L)
+            assertTrue(snapshot.replayChunkCount == 2)
+            assertTrue(snapshot.replayBytes == 4)
+        }
+    }
+
+    @Test
     fun publish_dropsOversizedReplayWindowInsteadOfClosingNewClient() {
         LocalStreamServer(port = 0, bindAddress = InetAddress.getLoopbackAddress()).use { server ->
             val port = server.start()

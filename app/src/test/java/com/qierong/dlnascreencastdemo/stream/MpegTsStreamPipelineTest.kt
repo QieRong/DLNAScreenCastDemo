@@ -111,4 +111,58 @@ class MpegTsStreamPipelineTest {
         pipeline.onAccessUnit(dummyKey, 30000L, true)
         assertTrue("Second keyframe should produce output", callbackCount > countAfterFirstKey)
     }
+
+    @Test
+    fun diagnosticSnapshot_tracksVideoCountsAndPtsDelta() {
+        val pipeline = MpegTsStreamPipeline(includeAudio = false) { _, _ -> }
+        pipeline.onCodecConfig(byteArrayOf(0, 0, 0, 1, 103, 0, 0, 0, 1, 104))
+
+        val dummyKey = byteArrayOf(0, 0, 0, 1, 101)
+        val dummyNonKey = byteArrayOf(0, 0, 0, 1, 65)
+
+        pipeline.onAccessUnit(dummyKey, 10_000L, true)
+        pipeline.onAccessUnit(dummyNonKey, 43_333L, false)
+
+        val snapshot = pipeline.diagnosticSnapshot()
+        assertEquals(2L, snapshot.encodedVideoFrameCount)
+        assertEquals(2L, snapshot.publishedVideoFrameCount)
+        assertEquals(0L, snapshot.droppedVideoFrameCount)
+        assertEquals(33_333L, snapshot.videoPtsDeltaUsMin)
+        assertEquals(33_333L, snapshot.videoPtsDeltaUsMax)
+        assertEquals(33_333L, snapshot.videoPtsDeltaUsAvg)
+        assertEquals(33_333L, snapshot.lastVideoPtsUs)
+    }
+
+    @Test
+    fun diagnosticSnapshot_countsVideoDroppedBeforeKeyframe() {
+        val pipeline = MpegTsStreamPipeline(includeAudio = false) { _, _ -> }
+
+        val dummyNonKey = byteArrayOf(0, 0, 0, 1, 65)
+        pipeline.onAccessUnit(dummyNonKey, 10_000L, false)
+
+        val snapshot = pipeline.diagnosticSnapshot()
+        assertEquals(1L, snapshot.encodedVideoFrameCount)
+        assertEquals(0L, snapshot.publishedVideoFrameCount)
+        assertEquals(1L, snapshot.droppedVideoFrameCount)
+        assertTrue(snapshot.waitingForKeyFrame)
+    }
+
+    @Test
+    fun audioAccessUnit_rejectsInitialOffsetMoreThanTwoSecondsBehindVideoBase() {
+        val pipeline = MpegTsStreamPipeline(includeAudio = true) { _, _ -> }
+        pipeline.onCodecConfig(byteArrayOf(0, 0, 0, 1, 103, 0, 0, 0, 1, 104))
+
+        val dummyKey = byteArrayOf(0, 0, 0, 1, 101)
+        val dummyAudio = byteArrayOf(-1, -15, 80, 128.toByte(), 1, 63, -4, 0, 0)
+        pipeline.onAccessUnit(dummyKey, 5_000_000L, true)
+
+        val accepted = pipeline.onAudioAccessUnit(dummyAudio, 0L)
+
+        assertFalse("Audio with a large initial negative offset should be rejected", accepted)
+        val snapshot = pipeline.diagnosticSnapshot()
+        assertEquals(1L, snapshot.receivedAudioFrameCount)
+        assertEquals(0L, snapshot.publishedAudioFrameCount)
+        assertEquals(1L, snapshot.droppedAudioFrameCount)
+        assertEquals(1L, snapshot.audioOffsetRejectedCount)
+    }
 }
