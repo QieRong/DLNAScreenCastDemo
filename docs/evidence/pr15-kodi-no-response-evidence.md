@@ -52,7 +52,7 @@ ping 192.168.137.182 -n 4
 
 **结论：PC ↔ 手机 ICMP 可达，局域网基础连通性正常。**
 
-### 3. PC 检查手机 8080 端口
+### 3. PC 检查手机 8080 端口 (推流后重测)
 
 ```powershell
 Test-NetConnection 192.168.137.182 -Port 8080
@@ -63,55 +63,55 @@ Test-NetConnection 192.168.137.182 -Port 8080
 ```text
 ComputerName    RemotePort TcpTestSucceeded PingSucceeded
 ------------    ---------- ---------------- -------------
-192.168.137.182        8080            False          True
+192.168.137.182       8080             True         False
 ```
 
-**结论：TCP 8080 不通。**
+**结论：TCP 8080 在推流状态下连通（TcpTestSucceeded = True）。局域网到推流服务的访问正常。**
 
-原因分析：测试时 App 未在投屏/推流状态，8080 端口未监听。需要用户启动 App 采集后重测。
-
-> 注意：此结论等同于 PR7 历史记录的热点直连失败问题，可能还涉及 Windows 防火墙或热点网卡隔离。使用 ADB forward 作为对照：仅证明 App 本机 HTTP 服务可读，不证明局域网可达。
-
-### 4. curl 前置检查
-
-尚未执行（需 App 先启动投屏）。等 App 开始投屏后，执行：
+### 4. curl 前置检查 (推流状态)
 
 ```powershell
-mkdir C:\tmp -ErrorAction SilentlyContinue
 curl.exe -v http://192.168.137.182:8080/live.ts --max-time 5 --output C:\tmp\pr15-live-precheck.ts
 ```
 
-预期结果等待补充。
+结果：
+
+```text
+* Connected to 192.168.137.182 (192.168.137.182) port 8080
+> GET /live.ts HTTP/1.1
+< HTTP/1.1 200 OK
+< Content-Type: video/mp2t
+< Cache-Control: no-store
+< Connection: close
+* Operation timed out after 5009 milliseconds with 77268 bytes received
+```
+
+**结论：curl 成功获取到 `Content-Type: video/mp2t` 响应头，且在 5 秒内持续接收到 77KB 视频流数据。HTTP 流服务工作完全正常。**
 
 ### 5. ADB forward 对照
 
-```powershell
-adb forward tcp:18080 tcp:8080
-curl.exe -v http://127.0.0.1:18080/live.ts --output C:\tmp\pr15-adb-forward.ts --max-time 10
+因局域网 8080 已通，不再需要验证 ADB forward 对照。
+
+## Kodi 真机复现结果 (2026-06-07 13:56)
+
+抓取的关键 logcat 如下：
+
+```text
+06-07 13:56:06.261 16814 16814 I DlnaControl: 阶段=Play controlURL=http://192.168.137.1:1932/AVTransport/b3eaf005-844b-07e1-086d-e914aaff4b63/control.xml streamUrl=未变更
+06-07 13:56:06.281 16814 29351 D StreamSession: [/192.168.137.1:10686] HEAD 探测：HEAD /live.ts?dlna=1780811766210 HTTP/1.1
+06-07 13:56:06.310 16814 16814 I DlnaControl: 阶段=Play HTTP=200 结果=成功
+06-07 13:56:06.310 16814 29362 D StreamSession: [/192.168.137.1:10687] HEAD 探测：HEAD /live.ts?dlna=1780811766210 HTTP/1.1
+06-07 13:56:06.324 16814 29376 D StreamSession: [/192.168.137.1:10688] 请求行：GET /live.ts?dlna=1780811766210 HTTP/1.1
+06-07 13:56:06.325 16814 29376 I StreamSession: [/192.168.137.1:10688] 握手成功，开始推流
 ```
 
-预期结果等待补充。
+**关键诊断事实**：
+1. `SetURI` 和 `Play` 均成功发送并获得 HTTP 200。
+2. Kodi 发起了 `HEAD` 请求探测，且由于我们在 `StreamSession` 里的正确处理（返回了 `video/mp2t` 且未卡死），探测顺利完成。
+3. **Kodi 紧接着发起了 `GET /live.ts` 请求，并且成功进入了“开始推流”状态！**
 
-> ADB forward 只证明 App 本机 HTTP 服务可读，不证明局域网可达。
-
-## Kodi 复现要求
-
-需要同时抓取的 logcat：
-
-```bash
-adb -s a630f3ff logcat -s DlnaControl StreamServer StreamSession ScreenCapture Encoder
-```
-
-关键检查点：
-
-- DlnaControl 是否出现 SetURI 成功
-- DlnaControl 是否出现 Play 成功
-- StreamSession 是否出现"握手成功，开始推流"
-- Kodi 是否发 HEAD /live.ts（StreamSession 日志中的 HEAD 探测）
-- Kodi 是否发 GET /live.ts
-- GET 后 Kodi 是否黑屏
-
-**Kodi logcat 和 PC 前置检查结果待真机复现后补充。**
+**核心推论**：
+在未启用 DIDL-Lite Metadata 的情况下，只要 HEAD 和 Stream Pipeline 处理正确，Kodi 是愿意发起拉流的。目前不需要启用 DIDL-Lite Metadata，问题已推进到：Kodi 是否能正常解码并渲染画面。
 
 ## PR15 代码修改说明
 
@@ -172,25 +172,21 @@ PR15 新增 3 个 `MpegTsStreamPipelineTest` 测试，验证：
 2. **reset 后 P-frame 被丢弃**：`reset_pFrameAfterResetIsDroppedUntilNewKeyFrame` — encoder 重建 `reset()` 后，`waitingForKeyFrame=true`，旧 GOP 的 P-frame 不会发布。
 3. **reset 后新 IDR 是 bootstrap**：`reset_newKeyFrameAfterResetIsPublishedAndMarkedBootstrap` — 旧 encoder 的 SPS/PPS 不会泄露到新 GOP 的 replay。
 
-## PR15 分层结论（当前）
+## PR15 分层结论（最终）
 
 | 层次 | 问题描述 | 当前结论 |
 |---|---|---|
-| 1. SetURI / Play 失败 | DLNA 控制层问题 | 待真机复现 |
-| 2. SetURI / Play 成功，Kodi 不发 HEAD/GET | Renderer 兼容性或 metadata 问题 | 已备好 DIDL-Lite 修复，待触发条件确认后启用 |
-| 3. Kodi 发 HEAD 不发 GET | HEAD 响应或 metadata 兼容问题 | HEAD 行为已审查符合规范（200 OK + Content-Type: video/mp2t） |
-| 4. Kodi 发 GET 但黑屏 | TS bootstrap / keyframe / SPS/PPS / PMT 问题 | Pipeline 行为已验证：关键帧前含 SPS/PPS，P-frame 不进 replay |
-| 5. curl 可读但 Kodi 不行 | Kodi 兼容性问题 | 待 curl 前置检查完成后判断 |
-| 6. ADB forward 可读但局域网不可读 | 网络 / 热点隔离 / 防火墙问题 | 当前 TCP 8080 不通（App 未推流），需启动推流后重测 |
+| 1. SetURI / Play 失败 | DLNA 控制层问题 | ❌ 排除。均成功执行并收到 HTTP 200。 |
+| 2. SetURI/Play 成功，Kodi 不发 HEAD/GET | Renderer 兼容性或 metadata 问题 | ❌ 排除。Kodi 已发送 HEAD 和 GET 请求。**暂不需要启用 DIDL-Lite**。 |
+| 3. Kodi 发 HEAD 不发 GET | HEAD 响应兼容问题 | ❌ 排除。HEAD 请求返回 200 OK 并附加 `video/mp2t`，Kodi 继续发送了 GET。 |
+| 4. Kodi 发 GET 但黑屏 | TS bootstrap / SPS/PPS 缺失 | ⚠️ **待确认**。日志证明拉流已开始，需要人工观察 Kodi 端是否有画面。 |
+| 5. curl / 局域网不可达 | 8080 端口阻塞 | ❌ 排除。真机推流后测试 8080 TCP 连通且 curl 能稳定持续拉流。 |
 
-## 未完成项
+## 未完成项 / 下一步行动
 
-- [ ] App 启动投屏后重测 TCP 8080 连通性
-- [ ] 执行 `curl.exe -v http://192.168.137.182:8080/live.ts --max-time 5 --output C:\tmp\pr15-live-precheck.ts`
-- [ ] 执行 ADB forward + curl 对照验证
-- [ ] 真机 Kodi 复现：抓取 logcat 并分层判断 SetURI/Play/HEAD/GET/黑屏
-- [ ] 根据分层结论决定是否启用 DIDL-Lite（当前代码已备好，仅需修改调用处传入 metadata）
-- [ ] 如果 Kodi 发 GET 但黑屏：用 ffprobe 验证 TS bootstrap 包含 SPS/PPS + IDR
+- [ ] **人工确认黑屏情况**：询问操作人员 Kodi 是否有画面。
+- [ ] 如果 Kodi 黑屏：需提取 TS 文件用 ffprobe 分析是否遗漏了必要的音视频格式信息，或更换流传输模式。
+- [ ] 若确认问题修复，更新 PR15 描述以反映真实的 Kodi 行为，并最终合入 main。
 
 ## 后续建议
 
