@@ -13,7 +13,10 @@ class AvTransportClient(
         streamUrl: String,
     ): AvTransportResult = send(
         controlUrl = controlUrl,
-        request = requestBuilder.setAvTransportUri(streamUrl),
+        request = requestBuilder.setAvTransportUri(
+            streamUrl = streamUrl,
+            metadata = requestBuilder.buildDidlLiteMetadata(streamUrl)
+        ),
         streamUrlForLog = streamUrl,
     )
 
