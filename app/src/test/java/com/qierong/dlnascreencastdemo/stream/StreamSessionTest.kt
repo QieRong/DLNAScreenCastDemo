@@ -110,6 +110,51 @@ class StreamSessionTest {
     }
 
     /**
+     * 验证 HEAD /live.ts 响应头包含 Content-Type: video/mp2t。
+     *
+     * Kodi 在 SetAVTransportURI 成功后可能先发 HEAD 探测内容类型，
+     * 必须返回正确的 MIME 类型才能让 Renderer 决策是否发起 GET。
+     */
+    @Test
+    fun open_headResponseContainsVideoMp2tContentType() {
+        socketPair().use { pair ->
+            pair.client.writeRequest("HEAD /live.ts HTTP/1.1")
+
+            StreamSession.open(pair.server)
+
+            val header = pair.client.readHeader()
+            assertTrue(
+                "HEAD 响应头必须包含 Content-Type: video/mp2t",
+                header.contains("Content-Type: video/mp2t"),
+            )
+        }
+    }
+
+    /**
+     * 验证 HEAD 请求不创建 session，且服务端在响应后立即关闭连接。
+     *
+     * HEAD 不应该启动 TS 推流，客户端在收到头之后立即读到 EOF（-1）。
+     */
+    @Test
+    fun open_headClosesSocketAfterResponseWithoutTsData() {
+        socketPair().use { pair ->
+            pair.client.writeRequest("HEAD /live.ts HTTP/1.1")
+
+            val session = StreamSession.open(pair.server)
+
+            // session 必须为 null：HEAD 不注册 live session
+            assertNull("HEAD 请求不应创建 StreamSession", session)
+            // 读完头部后，读取 1 字节应返回 -1（服务端关闭连接，不推送 TS 数据）
+            pair.client.readHeader()
+            pair.client.soTimeout = SOCKET_TIMEOUT_MS
+            assertTrue(
+                "HEAD 后服务端应关闭连接，客户端读到 EOF",
+                pair.client.getInputStream().read() < 0,
+            )
+        }
+    }
+
+    /**
      * 验证 writer 在响应头写出后启动，避免 TS 数据跑到 HTTP header 前面。
      *
      * onReady 中排队的数据必须在完整 HTTP 头之后到达客户端。
