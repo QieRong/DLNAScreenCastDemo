@@ -1,8 +1,10 @@
 package com.qierong.dlnascreencastdemo.stream
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+
 
 class MpegTsStreamPipelineTest {
     private val sps = byteArrayOf(0x67, 0x64, 0x00, 0x1f)
@@ -92,6 +94,90 @@ class MpegTsStreamPipelineTest {
         assertEquals(0L, published[0].data.firstPacketForPid(VIDEO_PID).pesPts())
         assertEquals(0L, published[1].data.firstPacketForPid(AUDIO_PID).pesPts())
     }
+
+    // ─── PR15：bootstrap/replay 行为验证 ─────────────────────────────────────
+
+    /**
+     * 验证 P-frame 不会被标记为 bootstrap（isBootstrap = false）。
+     *
+     * LocalStreamServer 只把 isBootstrap=true 的 chunk 加入 replay 缓存。
+     * 如果 P-frame 进入 replay，新客户端会从 P-frame 开始接收，导致 Kodi 黑屏。
+     */
+    @Test
+    fun onAccessUnit_pFrameIsNotMarkedAsBootstrap() {
+        val published = mutableListOf<PublishedChunk>()
+        val pipeline = MpegTsStreamPipeline { data, isBootstrap ->
+            published += PublishedChunk(data, isBootstrap)
+        }
+        pipeline.onOutputFormat(annexB(sps), annexB(pps))
+        // 先发一个关键帧建立基线
+        pipeline.onAccessUnit(annexB(idr), presentationTimeUs = 0, isKeyFrame = true)
+        // 再发 P-frame
+        pipeline.onAccessUnit(annexB(delta), presentationTimeUs = 33_333, isKeyFrame = false)
+
+        // 共发布 2 个 chunk
+        assertEquals(2, published.size)
+        // 第一个是关键帧，isBootstrap = true
+        assertTrue("关键帧 chunk 必须标记为 bootstrap", published[0].isBootstrap)
+        // 第二个是 P-frame，isBootstrap = false
+        assertFalse("P-frame chunk 不能标记为 bootstrap，否则 replay 会从 P-frame 开始", published[1].isBootstrap)
+    }
+
+    /**
+     * 验证 reset 后再次等到新关键帧前，旧 GOP 已被丢弃。
+     *
+     * encoder 重建后 reset() 被调用，waitingForKeyFrame 重置为 true；
+     * 此时发出的 P-frame 不应被发布（旧 GOP 不进入新的 replay 窗口）。
+     * 新的关键帧才应触发发布。
+     */
+    @Test
+    fun reset_pFrameAfterResetIsDroppedUntilNewKeyFrame() {
+        val published = mutableListOf<PublishedChunk>()
+        val pipeline = MpegTsStreamPipeline { data, isBootstrap ->
+            published += PublishedChunk(data, isBootstrap)
+        }
+        pipeline.onOutputFormat(annexB(sps), annexB(pps))
+        pipeline.onAccessUnit(annexB(idr), presentationTimeUs = 0, isKeyFrame = true)
+        val countBeforeReset = published.size // 应该是 1
+
+        // 模拟 encoder 重建：reset 管道
+        pipeline.reset()
+        // reset 后发 P-frame（旧 GOP 遗留），应被丢弃
+        pipeline.onAccessUnit(annexB(delta), presentationTimeUs = 33_333, isKeyFrame = false)
+
+        // P-frame 不应发布：published 数量不增加
+        assertEquals(
+            "reset 后 P-frame 不应被发布（等待新的 IDR 关键帧）",
+            countBeforeReset,
+            published.size,
+        )
+    }
+
+    /**
+     * 验证 reset 后收到新关键帧（带 SPS/PPS）会触发发布，且标记为 bootstrap。
+     *
+     * 新客户端在连接后应能收到 SPS/PPS + IDR，而不是来自旧 encoder 的 SPS/PPS。
+     */
+    @Test
+    fun reset_newKeyFrameAfterResetIsPublishedAndMarkedBootstrap() {
+        val published = mutableListOf<PublishedChunk>()
+        val pipeline = MpegTsStreamPipeline { data, isBootstrap ->
+            published += PublishedChunk(data, isBootstrap)
+        }
+        pipeline.onOutputFormat(annexB(sps), annexB(pps))
+        pipeline.onAccessUnit(annexB(idr), presentationTimeUs = 0, isKeyFrame = true)
+
+        pipeline.reset()
+        // reset 后提供新的 SPS/PPS，再发新的 IDR
+        pipeline.onOutputFormat(annexB(sps), annexB(pps))
+        pipeline.onAccessUnit(annexB(idr), presentationTimeUs = 66_666, isKeyFrame = true)
+
+        // 应该总共有 2 个 bootstrap chunk：reset 前 1 个 + reset 后 1 个
+        assertEquals("reset 前后各发布一个 IDR，共 2 个 chunk", 2, published.size)
+        assertTrue("reset 后的新 IDR chunk 必须标记为 bootstrap", published.last().isBootstrap)
+    }
+
+
 
     private fun annexB(vararg nalUnits: ByteArray): ByteArray =
         nalUnits.flatMap { START_CODE.asIterable() + it.asIterable() }.toByteArray()
