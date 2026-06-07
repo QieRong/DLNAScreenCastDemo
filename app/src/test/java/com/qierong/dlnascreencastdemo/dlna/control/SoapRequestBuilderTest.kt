@@ -83,16 +83,12 @@ class SoapRequestBuilderTest {
         )
     }
 
-    /**
-     * 验证 protocolInfo 使用 http-get:*:video/mp2t:* 声明 MPEG-TS over HTTP 流。
-     * Kodi 等 DLNA Renderer 依赖 protocolInfo 判断是否可播放该 URI。
-     */
     @Test
     fun buildDidlLiteMetadata_containsCorrectProtocolInfo() {
         val metadata = builder.buildDidlLiteMetadata("http://192.168.1.1:8080/live.ts")
         assertTrue(
-            "protocolInfo 必须声明 http-get:*:video/mp2t:*",
-            metadata.contains("protocolInfo=\"http-get:*:video/mp2t:*\""),
+            "protocolInfo 必须包含 DLNA flag 标记",
+            metadata.contains("protocolInfo=\"http-get:*:video/mp2t:DLNA.ORG_OP=00;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01500000000000000000000000000000\""),
         )
     }
 

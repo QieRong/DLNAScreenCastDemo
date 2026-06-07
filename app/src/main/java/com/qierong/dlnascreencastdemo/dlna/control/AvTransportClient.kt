@@ -11,11 +11,17 @@ class AvTransportClient(
     override suspend fun setAvTransportUri(
         controlUrl: String,
         streamUrl: String,
-    ): AvTransportResult = send(
-        controlUrl = controlUrl,
-        request = requestBuilder.setAvTransportUri(streamUrl),
-        streamUrlForLog = streamUrl,
-    )
+    ): AvTransportResult {
+        // 默认启用 metadata，通过包含 DLNA FLAG 提示 Renderer 按直播流处理
+        val useMetadata = true
+        val metadata = if (useMetadata) requestBuilder.buildDidlLiteMetadata(streamUrl) else ""
+        return send(
+            controlUrl = controlUrl,
+            request = requestBuilder.setAvTransportUri(streamUrl, metadata),
+            streamUrlForLog = streamUrl,
+            useMetadataForLog = useMetadata,
+        )
+    }
 
     override suspend fun play(controlUrl: String): AvTransportResult =
         send(controlUrl, requestBuilder.play())
@@ -30,10 +36,12 @@ class AvTransportClient(
         controlUrl: String,
         request: SoapRequest,
         streamUrlForLog: String? = null,
+        useMetadataForLog: Boolean? = null,
     ): AvTransportResult {
         logInfo(
             "阶段=${request.stage.label} controlURL=$controlUrl " +
-                "streamUrl=${streamUrlForLog ?: "未变更"}",
+                "streamUrl=${streamUrlForLog ?: "未变更"} " +
+                (if (useMetadataForLog != null) "metadataEnabled=$useMetadataForLog" else "")
         )
         return try {
             val response = transport.post(
