@@ -23,7 +23,16 @@ class StreamSessionTest {
 
             val session = StreamSession.open(pair.server)
 
-            assertTrue(pair.client.readHeader().startsWith("HTTP/1.1 200 OK\r\n"))
+            val header = pair.client.readHeader()
+            assertTrue(header.startsWith("HTTP/1.1 200 OK\r\n"))
+            assertTrue(
+                "GET 响应头必须包含 transferMode.dlna.org",
+                header.contains("transferMode.dlna.org: Streaming"),
+            )
+            assertTrue(
+                "GET 响应头必须包含 contentFeatures.dlna.org",
+                header.contains("contentFeatures.dlna.org: DLNA.ORG_OP=00;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01500000000000000000000000000000"),
+            )
             assertTrue(session!!.write(byteArrayOf(0x47, 0x11, 0x22)))
             assertArrayEquals(byteArrayOf(0x47, 0x11, 0x22), pair.client.readExactly(3))
             session.close()
@@ -116,7 +125,7 @@ class StreamSessionTest {
      * 必须返回正确的 MIME 类型才能让 Renderer 决策是否发起 GET。
      */
     @Test
-    fun open_headResponseContainsVideoMp2tContentType() {
+    fun open_headResponseContainsVideoMp2tContentTypeAndDlnaHeaders() {
         socketPair().use { pair ->
             pair.client.writeRequest("HEAD /live.ts HTTP/1.1")
 
@@ -126,6 +135,14 @@ class StreamSessionTest {
             assertTrue(
                 "HEAD 响应头必须包含 Content-Type: video/mp2t",
                 header.contains("Content-Type: video/mp2t"),
+            )
+            assertTrue(
+                "HEAD 响应头必须包含 transferMode.dlna.org",
+                header.contains("transferMode.dlna.org: Streaming"),
+            )
+            assertTrue(
+                "HEAD 响应头必须包含 contentFeatures.dlna.org",
+                header.contains("contentFeatures.dlna.org: DLNA.ORG_OP=00;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01500000000000000000000000000000"),
             )
         }
     }

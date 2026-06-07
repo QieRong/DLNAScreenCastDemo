@@ -64,7 +64,7 @@ class SoapRequestBuilder {
         title: String = "Live Screen Cast",
     ): String =
         // 注意：返回值是原始 XML 字符串，调用 setAvTransportUri() 时会自动通过 metadata.xmlEscaped() 二次转义
-        """<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"><item id="1" parentID="0" restricted="1"><dc:title>${title.xmlEscaped()}</dc:title><upnp:class>object.item.videoItem</upnp:class><res protocolInfo="http-get:*:video/mp2t:*">${streamUrl.xmlEscaped()}</res></item></DIDL-Lite>"""
+        """<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"><item id="1" parentID="0" restricted="1"><dc:title>${title.xmlEscaped()}</dc:title><upnp:class>object.item.videoItem</upnp:class><res protocolInfo="http-get:*:video/mp2t:DLNA.ORG_OP=00;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01500000000000000000000000000000">${streamUrl.xmlEscaped()}</res></item></DIDL-Lite>"""
 
     private fun actionRequest(
         stage: AvTransportStage,

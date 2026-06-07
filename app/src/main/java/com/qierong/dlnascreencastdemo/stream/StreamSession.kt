@@ -186,6 +186,8 @@ class StreamSession private constructor(
                         "HTTP/1.1 200 OK\r\n" +
                             "Content-Type: video/mp2t\r\n" +
                             "Cache-Control: no-store\r\n" +
+                            "transferMode.dlna.org: Streaming\r\n" +
+                            "contentFeatures.dlna.org: DLNA.ORG_OP=00;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01500000000000000000000000000000\r\n" +
                             "Connection: close\r\n" +
                             "\r\n"
                         ).toByteArray(ASCII),
